@@ -1,0 +1,4 @@
+project_id = "eventtech-barcode-manager"
+
+[functions.eventtech-sync]
+verify_jwt = false
