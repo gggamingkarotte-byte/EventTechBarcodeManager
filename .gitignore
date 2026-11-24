@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+build/
+dist/
+Barcodes/
+supabase/.temp/
+supabase/Password-*.txt
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
