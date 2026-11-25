@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 import base64
+from copy import deepcopy
+import html
 import json
 import subprocess
 
@@ -9,18 +11,20 @@ from PySide6.QtGui import QAction, QKeySequence, QPixmap, QBrush, QColor, QFont,
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
     QStackedWidget, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
-    QLineEdit, QFormLayout, QDialog, QDialogButtonBox, QComboBox, QTextEdit,
+    QLineEdit, QFormLayout, QDialog, QDialogButtonBox, QComboBox, QTextEdit, QCheckBox,
     QFileDialog, QMessageBox, QSpinBox, QTabWidget, QSplitter,
     QInputDialog, QGraphicsView, QGraphicsScene, QAbstractItemView,
     QScrollArea,
 )
 
-from config import APP_NAME, APP_VERSION
+from config import APP_NAME, APP_VERSION, DATA_DIR
 from database.database import Database
 from modules.inventory import create_article, update_article, delete_article, duplicate_article, find_by_barcode, ARTICLE_STATUSES
 from modules.warehouse import warehouse_path
 from modules.rack_graphic import RackGraphic
 from modules.scanner import ScannerReader
+from modules.dmx import load_article_modes, validate_article_modes
+from modules.live_camera import LiveCameraScanner
 from modules.barcode import (
     generate_unique_code, render_barcode_png, create_label_pdf,
     MIN_BARCODE_SCALE, MAX_BARCODE_SCALE, LABELS_PER_PAGE,
@@ -31,6 +35,9 @@ from modules.cloud_sync import (
     SupabaseSyncClient, apply_cloud_snapshot, local_snapshot, plan_sync,
 )
 from modules.secret_store import protect_secret, unprotect_secret
+from modules.usage_guides import (
+    has_auto_usage_guide, manufacturer_manual_search_url, update_auto_usage_guide,
+)
 
 
 class ScanBridge(QObject):
@@ -138,13 +145,246 @@ QPushButton:disabled { background: #555b60; }
 """
 
 
+class DmxModesDialog(QDialog):
+    def __init__(self, modes: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("DMX-Modi und Kanäle")
+        self.resize(1050, 620)
+        self.modes = deepcopy(modes)
+        self.current_mode_index = -1
+
+        self.mode_list = QListWidget()
+        self.mode_list.currentRowChanged.connect(self._select_mode)
+        mode_buttons = QHBoxLayout()
+        add_mode = QPushButton("Modus hinzufügen")
+        add_mode.clicked.connect(self._add_mode)
+        edit_mode = QPushButton("Modus bearbeiten")
+        edit_mode.clicked.connect(self._edit_mode)
+        delete_mode = QPushButton("Modus löschen")
+        delete_mode.clicked.connect(self._delete_mode)
+        mode_buttons.addWidget(add_mode)
+        mode_buttons.addWidget(edit_mode)
+        mode_buttons.addWidget(delete_mode)
+
+        self.channel_table = QTableWidget(0, 5)
+        self.channel_table.setHorizontalHeaderLabels(
+            ["Kanal", "Funktion", "Min.-Wert", "Max.-Wert", "Beschreibung"]
+        )
+        self.channel_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.channel_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.channel_table.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
+        )
+        self.channel_table.horizontalHeader().setStretchLastSection(True)
+        channel_buttons = QHBoxLayout()
+        add_channel = QPushButton("Kanal hinzufügen")
+        add_channel.clicked.connect(self._add_channel)
+        delete_channel = QPushButton("Ausgewählte Kanäle löschen")
+        delete_channel.clicked.connect(self._delete_channels)
+        channel_buttons.addWidget(add_channel)
+        channel_buttons.addWidget(delete_channel)
+
+        mode_column = QVBoxLayout()
+        mode_column.addWidget(QLabel("DMX-Modi"))
+        mode_column.addWidget(self.mode_list)
+        mode_column.addLayout(mode_buttons)
+        channel_column = QVBoxLayout()
+        channel_column.addWidget(QLabel("Kanäle des ausgewählten Modus"))
+        channel_column.addWidget(self.channel_table)
+        channel_column.addLayout(channel_buttons)
+        columns = QHBoxLayout()
+        columns.addLayout(mode_column, 1)
+        columns.addLayout(channel_column, 2)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept_changes)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addLayout(columns)
+        layout.addWidget(buttons)
+        self._refresh_modes(0, store=False)
+
+    def _store_current_mode(self):
+        index = self.current_mode_index
+        if not 0 <= index < len(self.modes):
+            return
+        channels = []
+        for row in range(self.channel_table.rowCount()):
+            id_item = self.channel_table.item(row, 0)
+            channels.append({
+                "id": id_item.data(Qt.UserRole) if id_item else None,
+                "channel_number": self._item_text(row, 0),
+                "function_name": self._item_text(row, 1),
+                "value_min": self._item_text(row, 2),
+                "value_max": self._item_text(row, 3),
+                "description": self._item_text(row, 4),
+            })
+        self.modes[index]["channels"] = channels
+
+    def _item_text(self, row, column):
+        item = self.channel_table.item(row, column)
+        return item.text().strip() if item else ""
+
+    def _select_mode(self, index):
+        if index == self.current_mode_index:
+            return
+        self._store_current_mode()
+        self.current_mode_index = index if 0 <= index < len(self.modes) else -1
+        self._render_channels()
+
+    def _render_channels(self):
+        mode = self.modes[self.current_mode_index] if self.current_mode_index >= 0 else None
+        channels = mode["channels"] if mode else []
+        self.channel_table.setRowCount(len(channels))
+        for row, channel in enumerate(channels):
+            values = (
+                channel.get("channel_number", ""),
+                channel.get("function_name", ""),
+                channel.get("value_min", 0),
+                channel.get("value_max", 255),
+                channel.get("description", ""),
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if column == 0:
+                    item.setData(Qt.UserRole, channel.get("id"))
+                self.channel_table.setItem(row, column, item)
+
+    def _refresh_modes(self, selected_index, store=True):
+        if store:
+            self._store_current_mode()
+        self.current_mode_index = -1
+        self.mode_list.blockSignals(True)
+        self.mode_list.clear()
+        for mode in self.modes:
+            self.mode_list.addItem(self._mode_label(mode))
+        self.mode_list.blockSignals(False)
+        if self.modes:
+            self.mode_list.setCurrentRow(max(0, min(selected_index, len(self.modes) - 1)))
+        else:
+            self.channel_table.setRowCount(0)
+
+    @staticmethod
+    def _mode_label(mode):
+        return f"{mode.get('name', 'DMX-Modus')} ({mode.get('channel_count', 0)} Kanäle)"
+
+    def _add_mode(self):
+        self._store_current_mode()
+        name, accepted = QInputDialog.getText(self, "DMX-Modus hinzufügen", "Modusname:")
+        if not accepted:
+            return
+        if not name.strip():
+            QMessageBox.warning(self, "DMX-Modus", "Bitte einen Modusnamen eingeben.")
+            return
+        count, accepted = QInputDialog.getInt(
+            self, "DMX-Modus hinzufügen", "Kanalanzahl:", 1, 1, 512
+        )
+        if not accepted:
+            return
+        self.modes.append({
+            "id": None,
+            "name": name.strip(),
+            "channel_count": count,
+            "channels": [],
+        })
+        self._refresh_modes(len(self.modes) - 1, store=False)
+
+    def _edit_mode(self):
+        self._store_current_mode()
+        index = self.mode_list.currentRow()
+        if index < 0:
+            QMessageBox.information(self, "DMX-Modus", "Bitte zuerst einen Modus auswählen.")
+            return
+        mode = self.modes[index]
+        name, accepted = QInputDialog.getText(
+            self, "DMX-Modus bearbeiten", "Modusname:", text=mode["name"]
+        )
+        if not accepted:
+            return
+        if not name.strip():
+            QMessageBox.warning(self, "DMX-Modus", "Bitte einen Modusnamen eingeben.")
+            return
+        count, accepted = QInputDialog.getInt(
+            self, "DMX-Modus bearbeiten", "Kanalanzahl:",
+            mode["channel_count"], 1, 512,
+        )
+        if not accepted:
+            return
+        mode["name"] = name.strip()
+        mode["channel_count"] = count
+        self.mode_list.item(index).setText(self._mode_label(mode))
+
+    def _delete_mode(self):
+        self._store_current_mode()
+        index = self.mode_list.currentRow()
+        if index < 0:
+            QMessageBox.information(self, "DMX-Modus", "Bitte zuerst einen Modus auswählen.")
+            return
+        self.current_mode_index = -1
+        del self.modes[index]
+        self._refresh_modes(index - 1, store=False)
+
+    def _add_channel(self):
+        self._store_current_mode()
+        index = self.mode_list.currentRow()
+        if index < 0:
+            QMessageBox.information(self, "DMX-Kanal", "Bitte zuerst einen Modus auswählen.")
+            return
+        mode = self.modes[index]
+        used_numbers = set()
+        for channel in mode["channels"]:
+            try:
+                used_numbers.add(int(channel["channel_number"]))
+            except (TypeError, ValueError):
+                continue
+        number = next((candidate for candidate in range(1, 513) if candidate not in used_numbers), None)
+        if number is None:
+            QMessageBox.warning(self, "DMX-Kanal", "Ein DMX-Universum kann höchstens 512 Kanäle haben.")
+            return
+        mode["channel_count"] = max(mode["channel_count"], number)
+        mode["channels"].append({
+            "id": None,
+            "channel_number": number,
+            "function_name": "",
+            "value_min": 0,
+            "value_max": 255,
+            "description": "",
+        })
+        self.mode_list.item(index).setText(self._mode_label(mode))
+        self.current_mode_index = index
+        self._render_channels()
+        self.channel_table.setCurrentCell(len(mode["channels"]) - 1, 1)
+        self.channel_table.editItem(self.channel_table.currentItem())
+
+    def _delete_channels(self):
+        if self.mode_list.currentRow() < 0:
+            QMessageBox.information(self, "DMX-Kanal", "Bitte zuerst einen Modus auswählen.")
+            return
+        selected_rows = sorted(
+            {item.row() for item in self.channel_table.selectedItems()},
+            reverse=True,
+        )
+        for row in selected_rows:
+            self.channel_table.removeRow(row)
+        self._store_current_mode()
+
+    def _accept_changes(self):
+        self._store_current_mode()
+        try:
+            self.modes = validate_article_modes(self.modes)
+        except ValueError as exc:
+            QMessageBox.warning(self, "DMX-Modi", str(exc))
+            return
+        self.accept()
+
+
 class ArticleDialog(QDialog):
     def __init__(self, db: Database, article=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.article = article
         self.setWindowTitle("Artikel bearbeiten" if article else "Artikel hinzufügen")
-        self.resize(650, 620)
+        self.resize(760, 760)
         form = QFormLayout(self)
         self.name = QLineEdit(article["name"] if article else "")
         self.manufacturer = QLineEdit(article["manufacturer"] if article else "")
@@ -156,8 +396,23 @@ class ArticleDialog(QDialog):
         self.status = QComboBox(); self.status.addItems(ARTICLE_STATUSES)
         if article:
             self.status.setCurrentText(article["status"])
-        self.description = QTextEdit(article["description"] if article else "")
-        self.technical = QTextEdit(article["technical_data"] if article else "")
+        self.description = QTextEdit()
+        self.description.setPlainText(article["description"] if article else "")
+        self.technical = QTextEdit()
+        self.technical.setPlainText(article["technical_data"] if article else "")
+        self.auto_usage_guide = QCheckBox("Bedienhinweise automatisch ergänzen")
+        self.auto_usage_guide.setToolTip(
+            "Ergänzt allgemeine Hinweise passend zu Kategorie und Produkt sowie einen Suchlink zur Herstelleranleitung. "
+            "Die Suchanfrage wird erst übertragen, wenn der Link geöffnet wird."
+        )
+        self.auto_usage_guide.setChecked(
+            has_auto_usage_guide(article["technical_data"] if article else "")
+        )
+        self.dmx_modes = load_article_modes(db, article["id"]) if article else []
+        self.dmx_button = QPushButton("DMX-Modi und Kanäle bearbeiten")
+        self.dmx_button.clicked.connect(self.edit_dmx_modes)
+        self.dmx_summary = QLabel()
+        self._refresh_dmx_summary()
         form.addRow("Artikelname *", self.name)
         form.addRow("Hersteller", self.manufacturer)
         form.addRow("Modell", self.model)
@@ -167,24 +422,54 @@ class ArticleDialog(QDialog):
         form.addRow("Status", self.status)
         form.addRow("Beschreibung", self.description)
         form.addRow("Technische Daten", self.technical)
+        form.addRow("", self.auto_usage_guide)
+        form.addRow("DMX", self.dmx_button)
+        form.addRow("", self.dmx_summary)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
 
     def data(self):
+        name = self.name.text().strip()
+        manufacturer = self.manufacturer.text().strip()
+        model = self.model.text().strip()
+        category = self.category.text().strip()
+        technical_data = update_auto_usage_guide(
+            self.technical.toPlainText().strip(),
+            enabled=self.auto_usage_guide.isChecked(),
+            name=name,
+            manufacturer=manufacturer,
+            model=model,
+            category=category,
+        )
         return {
-            "name": self.name.text().strip(),
-            "manufacturer": self.manufacturer.text().strip(),
-            "model": self.model.text().strip(),
-            "category": self.category.text().strip(),
+            "name": name,
+            "manufacturer": manufacturer,
+            "model": model,
+            "category": category,
             "barcode": self.barcode.text().strip(),
             "quantity": self.quantity.value(),
             "status": self.status.currentText(),
             "description": self.description.toPlainText().strip(),
-            "technical_data": self.technical.toPlainText().strip(),
+            "technical_data": technical_data,
+            "dmx_modes": deepcopy(self.dmx_modes),
             "box_id": self.article["box_id"] if self.article else None,
         }
+
+    def edit_dmx_modes(self):
+        dialog = DmxModesDialog(self.dmx_modes, self)
+        if dialog.exec():
+            self.dmx_modes = dialog.modes
+            self._refresh_dmx_summary()
+
+    def _refresh_dmx_summary(self):
+        if not self.dmx_modes:
+            self.dmx_summary.setText("Keine DMX-Modi hinterlegt.")
+            return
+        mode_count = len(self.dmx_modes)
+        channel_count = sum(mode["channel_count"] for mode in self.dmx_modes)
+        self.dmx_summary.setText(f"{mode_count} Modus/Modi, insgesamt {channel_count} Kanäle")
 
 
 class TablePage(QWidget):
@@ -684,10 +969,20 @@ class ArticleDetailsDialog(QDialog):
         for label, value in values:
             form.addRow(label, self._value_label(value))
         for label, key in (("Beschreibung", "description"), ("Technische Daten", "technical_data")):
-            text = QTextEdit(self.article[key] or "")
+            text = QTextEdit()
+            text.setPlainText(self.article[key] or "")
             text.setReadOnly(True)
             text.setMaximumHeight(110)
             form.addRow(label, text)
+        if has_auto_usage_guide(self.article["technical_data"] or ""):
+            search_url = manufacturer_manual_search_url(
+                self.article["name"], self.article["manufacturer"], self.article["model"]
+            )
+            manual_link = QLabel(
+                f'<a href="{html.escape(search_url, quote=True)}">Herstelleranleitung online suchen</a>'
+            )
+            manual_link.setOpenExternalLinks(True)
+            form.addRow("Herstelleranleitung", manual_link)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
@@ -875,6 +1170,8 @@ class MainWindow(QMainWindow):
 
     def open_page(self, index):
         self.pages.setCurrentIndex(index)
+        if index != 0 and hasattr(self, "dashboard_camera"):
+            self.dashboard_camera.stop_camera()
         if index == 0:
             self.refresh_dashboard()
         elif index == 2:
@@ -930,6 +1227,10 @@ class MainWindow(QMainWindow):
             button.clicked.connect(handler)
             quick.addWidget(button)
         layout.addLayout(quick)
+        layout.addWidget(QLabel("Live-Kamera-Scanner"))
+        self.dashboard_camera = LiveCameraScanner()
+        self.dashboard_camera.barcode_scanned.connect(self.process_camera_scan)
+        layout.addWidget(self.dashboard_camera)
         layout.addWidget(QLabel("Letzte Scans"))
         self.recent_scans = TablePage("", ["Datum", "Barcode", "Artikel", "Lagerort", "Scan-Art", "Aktion"])
         layout.addWidget(self.recent_scans)
@@ -977,6 +1278,12 @@ class MainWindow(QMainWindow):
     def process_ipad_scan(self, code: str):
         code = self.scanner.process(code)
         self.handle_barcode_scan(code, "Normaler Scan", prompt_unknown=False)
+
+    def process_camera_scan(self, code: str):
+        code = self.scanner.process(code)
+        self.handle_barcode_scan(code, "Kamera-Scan", prompt_unknown=False)
+        if code:
+            self.dashboard_camera.status.setText(f"Kamera-Scan erfasst: {code}")
 
     def handle_barcode_scan(self, code: str, scan_type: str, prompt_unknown: bool):
         if not code:
@@ -2365,7 +2672,8 @@ class MainWindow(QMainWindow):
         ipad_layout = QVBoxLayout(ipad_tab)
         ipad_info = QLabel(
             "Koppeln Sie ein iPad oder Android-Gerät im selben WLAN. Die mobile Seite kann Barcodes mit der "
-            "Gerätekamera fotografieren und lokal auf diesem PC auswerten. Alternativ können Sie einen "
+            "Live-Kamera oder als Foto aufnehmen und lokal auf diesem PC auswerten. Für Live-Video muss das "
+            "PC-Zertifikat einmalig auf dem Mobilgerät installiert werden. Alternativ können Sie einen "
             "Bluetooth-HID-Scanner mit dem Mobilgerät verbinden."
         )
         ipad_info.setWordWrap(True)
@@ -2373,6 +2681,12 @@ class MainWindow(QMainWindow):
         self.ipad_url = QLineEdit()
         self.ipad_url.setReadOnly(True)
         self.ipad_url.setPlaceholderText("Kopplung starten, um eine Adresse zu erhalten")
+        self.ipad_https_url = QLineEdit()
+        self.ipad_https_url.setReadOnly(True)
+        self.ipad_https_url.setPlaceholderText("Sichere Live-Kamera-Adresse")
+        self.ipad_certificate_url = QLineEdit()
+        self.ipad_certificate_url.setReadOnly(True)
+        self.ipad_certificate_url.setPlaceholderText("Adresse zum einmaligen Zertifikat-Download")
         ipad_buttons = QHBoxLayout()
         self.ipad_start_button = QPushButton("iPad / Android koppeln")
         self.ipad_start_button.clicked.connect(self.start_ipad_scanner)
@@ -2389,13 +2703,18 @@ class MainWindow(QMainWindow):
         ipad_layout.addWidget(self.ipad_status)
         ipad_layout.addWidget(QLabel("Diese Adresse im Browser des Mobilgeräts öffnen:"))
         ipad_layout.addWidget(self.ipad_url)
+        ipad_layout.addWidget(QLabel("HTTPS-Adresse für Live-Kamera:"))
+        ipad_layout.addWidget(self.ipad_https_url)
+        ipad_layout.addWidget(QLabel("Zertifikat einmalig auf dem iPad installieren:"))
+        ipad_layout.addWidget(self.ipad_certificate_url)
         ipad_layout.addLayout(ipad_buttons)
         ipad_layout.addWidget(copy_url)
         ipad_layout.addWidget(qr_button)
         ipad_layout.addWidget(QLabel(
-            "Hinweis: Beide Geräte müssen im selben lokalen WLAN sein. Beim ersten Start kann die Windows-Firewall "
-            "eine Freigabe für private Netzwerke anfragen. Die Kopplungsadresse enthält ein geheimes Sitzungstoken; "
-            "teilen Sie sie nur mit Ihrem Mobilgerät und beenden Sie die Kopplung danach."
+            "Beide Geräte müssen im selben WLAN sein. Zertifikat im Mobilbrowser herunterladen, in iPadOS unter "
+            "Einstellungen → Profil geladen installieren und anschließend unter Allgemein → Info → "
+            "Zertifikatsvertrauenseinstellungen vollständig aktivieren. Danach die HTTPS-Adresse öffnen. "
+            "Die Kopplungsadresse enthält ein Sitzungstoken; nur im vertrauenswürdigen WLAN verwenden."
         ))
         ipad_layout.addStretch()
         tabs.addTab(ipad_tab, "iPad / Android")
@@ -2719,17 +3038,24 @@ class MainWindow(QMainWindow):
         if self.ipad_server:
             return
         try:
-            self.ipad_server = IpadScannerServer(self.scan_bridge.barcode_received.emit)
+            addresses = local_ipv4_addresses() or ["127.0.0.1"]
+            self.ipad_server = IpadScannerServer(
+                self.scan_bridge.barcode_received.emit,
+                certificate_dir=DATA_DIR / "scanner-certificate",
+                certificate_hosts=addresses,
+            )
             self.ipad_server.start()
         except OSError as exc:
             self.ipad_server = None
             QMessageBox.critical(self, "Mobil-Scanner", f"Der Scanner-Webserver konnte nicht gestartet werden:\n{exc}")
             return
-        addresses = local_ipv4_addresses()
-        if not addresses:
-            addresses = ["127.0.0.1"]
-        self.ipad_url.setText(f"http://{addresses[0]}:{self.ipad_server.port}/?key={self.ipad_server.token}")
-        self.ipad_status.setText("Mobil-Scanner aktiv. QR-Code scannen oder die Adresse im Browser öffnen.")
+        address = addresses[0]
+        self.ipad_url.setText(f"http://{address}:{self.ipad_server.port}/?key={self.ipad_server.token}")
+        self.ipad_https_url.setText(f"https://{address}:{self.ipad_server.https_port}/?key={self.ipad_server.token}")
+        self.ipad_certificate_url.setText(
+            f"http://{address}:{self.ipad_server.port}/certificate?key={self.ipad_server.token}"
+        )
+        self.ipad_status.setText("Mobil-Scanner aktiv. Zertifikat installieren und HTTPS-Adresse für Live-Kamera öffnen.")
         self.ipad_start_button.setEnabled(False)
         self.ipad_stop_button.setEnabled(True)
 
@@ -2738,6 +3064,8 @@ class MainWindow(QMainWindow):
             self.ipad_server.stop()
             self.ipad_server = None
         self.ipad_url.clear()
+        self.ipad_https_url.clear()
+        self.ipad_certificate_url.clear()
         self.ipad_status.setText("Mobil-Scanner ist nicht aktiv.")
         self.ipad_start_button.setEnabled(True)
         self.ipad_stop_button.setEnabled(False)
@@ -2792,6 +3120,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.cloud_sync_timer.stop()
+        self.dashboard_camera.stop_camera()
         self.stop_ipad_scanner()
         self.db.close()
         event.accept()

@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+import sys
 from PyInstaller.utils.hooks import collect_all
 
 datas = []
@@ -6,6 +8,9 @@ binaries = []
 hiddenimports = ['barcode.codex', 'barcode.ean']
 tmp_ret = collect_all('zxingcpp')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+python3t_compat = Path(sys.base_prefix) / 'abi3t-compat' / 'python3t.dll'
+if python3t_compat.is_file():
+    binaries.append((str(python3t_compat), '.'))
 
 
 a = Analysis(

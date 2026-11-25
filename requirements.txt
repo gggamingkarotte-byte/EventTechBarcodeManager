@@ -4,5 +4,6 @@ qrcode[pil]>=8.0
 ReportLab>=4.2
 Pillow>=11.0
 zxing-cpp>=3.0
+cryptography>=44.0
 pyinstaller>=6.11
 

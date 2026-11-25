@@ -1,5 +1,5 @@
 #define AppName "EventTech Barcode Manager"
-#define AppVersion "1.0.6"
+#define AppVersion "1.1.0"
 #define AppExeName "EventTechBarcodeManager.exe"
 #ifndef AppSourceDir
   #define AppSourceDir "dist\EventTechBarcodeManager"

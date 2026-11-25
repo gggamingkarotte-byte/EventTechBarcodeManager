@@ -17,6 +17,17 @@ In der Artikelverwaltung öffnet **Details** alle gespeicherten Artikeldaten. Ei
 Artikel öffnet dieselbe Ansicht. Neben Stammdaten werden, falls vorhanden, Barcodes, DMX-Daten,
 Reparaturen, Dokumente, Fotos, Lagerbewegungen und Scan-Verlauf angezeigt.
 
+Beim Erstellen oder Bearbeiten eines Artikels kann **Bedienhinweise automatisch ergänzen** aktiviert werden.
+Die technischen Daten erhalten dann allgemeine, an der Kategorie orientierte Sicherheitshinweise sowie einen
+Suchlink nach einer passenden Herstelleranleitung. Die Hinweise werden beim Speichern aktualisiert, nicht
+mehrfach angehängt; beim Deaktivieren wird nur der automatisch erzeugte Abschnitt entfernt. Der Suchlink wird
+erst beim Anklicken an Google übermittelt und muss anhand des exakten Modells geprüft werden.
+
+Im selben Dialog öffnet **DMX-Modi und Kanäle bearbeiten** den DMX-Editor. Dort lassen sich mehrere Modi
+mit jeweils bis zu 512 Kanälen anlegen, umbenennen und entfernen. Pro Kanal können Nummer, Funktion,
+Wertebereich und Beschreibung gepflegt werden. Die Änderungen werden erst mit dem Artikel gespeichert;
+vorhandene Modus- und Kanal-IDs bleiben beim Bearbeiten erhalten.
+
 ## Datenablage
 
 - Datenbank: `%LOCALAPPDATA%\EventTechBarcodeManager\eventtech.db`
@@ -34,15 +45,16 @@ Scanner-Test sind ebenfalls dort verfügbar.
 ## iPad oder Android als Scanner
 
 1. Windows-PC und iPad/Android-Gerät mit demselben lokalen WLAN verbinden.
-2. In **Einstellungen → iPad-Scanner** auf **iPad-Kopplung starten** klicken.
-3. Den Kopplungs-QR-Code scannen oder die angezeigte Adresse im Browser des Mobilgeräts öffnen.
-4. Einen Barcode mit der Gerätekamera aufnehmen. Nach der Aufnahme wird er automatisch dekodiert und bei Erfolg protokolliert.
-5. Bei nicht erkanntem/zu kleinem Barcode zeigt die Seite Hinweise zu Abstand, Ruhe und Beleuchtung.
+2. In **Einstellungen → iPad / Android** die Kopplung starten und den QR-Code im Mobilbrowser öffnen.
+3. Auf der geöffneten Seite das **Kamera-Zertifikat installieren** laden. Auf dem iPad das geladene Profil unter **Einstellungen → Profil geladen** installieren und unter **Allgemein → Info → Zertifikatsvertrauenseinstellungen** vollständig aktivieren. Android kann je nach Version ebenfalls eine Installation des CA-Zertifikats verlangen.
+4. Die angezeigte **HTTPS-Adresse** öffnen, **Live-Kamera starten** antippen und den Barcode mittig ins Bild halten. Erkannte Codes werden automatisch dekodiert und protokolliert.
+5. Falls die Live-Kamera nicht genutzt werden kann, steht weiterhin die Fotoaufnahme zur Verfügung.
 
 Die Kameraauswertung erfolgt lokal auf dem PC. Es wird keine externe Scan-Cloud verwendet. Für die Kopplung muss
-Windows eingehende Verbindungen im privaten Netzwerk zulassen. Der QR-Code enthält ein Sitzungstoken; nur im
-vertrauenswürdigen WLAN verwenden und die Kopplung nach dem Einsatz beenden. Alternativ kann ein Bluetooth-HID-
-Scanner direkt mit dem iPad oder Android-Gerät gekoppelt und auf der mobilen Seite als Tastatureingabe verwendet werden.
+Windows eingehende Verbindungen im privaten Netzwerk zulassen. Das lokale Zertifikat bleibt auf diesem PC; bei
+einer geänderten Netzwerkadresse kann eine erneute Installation nötig sein. Der Kopplungs-QR-Code enthält ein
+Sitzungstoken; nur im vertrauenswürdigen WLAN verwenden und die Kopplung nach dem Einsatz beenden. Alternativ
+kann ein Bluetooth-HID-Scanner direkt mit dem Mobilgerät gekoppelt und als Tastatureingabe verwendet werden.
 
 ## Cloud-Synchronisierung zwischen PCs
 
@@ -70,6 +82,49 @@ Die App speichert den Organisationsschlüssel pro Windows-Benutzer mit DPAPI ver
 verwendet ihn nur serverseitig. Alle PCs mit dem gemeinsamen Schlüssel erhalten Zugriff auf denselben Bestand.
 Bei Verlust des Schlüssels muss `EVENTTECH_SHARED_KEY` im Supabase-Dashboard ersetzt und auf allen PCs
 aktualisiert werden.
+
+## GitHub-Pages-Web-App
+
+Eine browserbasierte Kernversion liegt im Ordner `web`. Sie unterstützt Anmeldung, Artikelsuche,
+Artikelanlage und -bearbeitung, das Anlegen/Bearbeiten von Lagern, Regalen, Böden und Boxen,
+Lagerplatzzuordnung, DMX-Details sowie Barcode-Suche per Kamera oder USB-/Bluetooth-Scanner. Reparaturen,
+Inventuren und die visuelle Regal-Grafik bleiben in der Desktop-App.
+
+Die Webseite wird statisch über GitHub Pages ausgeliefert. Artikeldaten bleiben in Supabase; die Webseite
+verwendet Supabase Auth und legt weder den `service_role`-Key noch den Desktop-Organisationsschlüssel im
+öffentlichen Repository ab. Jeder angemeldete Supabase-Benutzer dieses Projekts kann den gemeinsamen
+Inventarbestand lesen und bearbeiten. Daher öffentliche Registrierung deaktivieren und nur vertrauenswürdige
+Benutzerkonten anlegen.
+
+### Einrichten
+
+1. Erstelle ein Supabase-Projekt. Für ein neues Projekt führe
+   `supabase\migrations\202611230001_eventtech_sync.sql` im SQL Editor aus. Wenn du bereits die Desktop-
+   Cloud-Synchronisierung eingerichtet hast, ist diese Basismigration schon vorhanden.
+2. Führe anschließend `supabase\migrations\202611240001_eventtech_web_auth.sql` im SQL Editor aus.
+   Diese Migration erlaubt angemeldeten Benutzern das Lesen und stellt eine geschützte RPC für Änderungen
+   bereit; direkte Schreibrechte auf der Synchronisierungstabelle werden nicht vergeben.
+3. Aktiviere in Supabase **Authentication → Providers → Email** und deaktiviere öffentliche Registrierungen.
+   Lege die benötigten Benutzer im Supabase-Dashboard unter **Authentication → Users** an bzw. lade sie ein.
+4. Ergänze unter **Authentication → URL Configuration** die GitHub-Pages-Adresse als Site URL und erlaubte
+   Redirect URL: `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/`.
+5. Öffne im GitHub-Repository **Settings → Pages** und wähle **GitHub Actions** als Build-/Deployment-Quelle.
+   Der Workflow `.github\workflows\deploy-web.yml` veröffentlicht den Ordner `web` automatisch nach Pushes
+   auf `main`; ein manueller Start ist auch unter **Actions → Deploy inventory web app → Run workflow** möglich.
+6. Rufe `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/` auf. Gib einmalig die Supabase-
+   Projekt-URL und den öffentlichen Publishable-/anon-Key ein und melde dich mit einem angelegten Benutzer an.
+   Projektkonfiguration und Sitzung werden nur im lokalen Browser gespeichert; auf gemeinsam genutzten
+   Geräten nach der Nutzung abmelden.
+
+Für die Desktop-App-Cloud-Synchronisierung richte zusätzlich die oben beschriebene Edge Function ein.
+Für lokale Web-Entwicklung installiere Node.js, führe `npm ci` und `npm run build` im Ordner `web` aus und
+öffne `web` über einen lokalen HTTPS- oder HTTP-Server.
+
+Der Kamerascan benötigt HTTPS und eine Kamera-Freigabe. Die App verwendet die eingebaute Barcode-API, wenn
+verfügbar, und einen lokal gebündelten Decoder als Fallback, auch für mobile Browser wie Safari auf dem iPad.
+Falls der Kamerazugriff nicht verfügbar ist, kann der Code manuell eingegeben oder mit einem USB-/
+Bluetooth-HID-Scanner in das Suchfeld übertragen werden. Kamerabilder werden lokal verarbeitet und nicht
+gespeichert oder an Dritte übertragen.
 
 ## Regal-Grafik
 
@@ -112,8 +167,9 @@ python -m unittest discover -s tests -v
 build.bat
 ```
 
-Die portable Anwendung wird unter `dist\EventTechBarcodeManager` erzeugt. Wenn Inno Setup 6 installiert ist,
-erstellt das Skript zusätzlich `dist\installer\EventTechBarcodeManager-Setup-1.0.6.exe`.
+Die portable Anwendung wird unter `dist\EventTechBarcodeManager` erzeugt. Mit installiertem Inno Setup 6
+erstellt das Skript zusätzlich `dist\installer\EventTechBarcodeManager-Setup-1.1.0.exe`. Der Build verwendet
+zuerst die lokale virtuelle Umgebung, danach Python aus dem PATH oder den Python-Launcher.
 
 Der Installer erlaubt die Installation nur für den aktuellen Benutzer ohne Administratorrechte oder für alle
 Benutzer mit Administratorfreigabe. Datenbank, Dokumente und Backups werden getrennt unter
