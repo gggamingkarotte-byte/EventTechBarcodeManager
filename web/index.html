@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101b28">
+  <meta name="description" content="Browserbasierte Lager- und Artikelverwaltung für Veranstaltungstechnik.">
+  <title>EventTech · Lager</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.bundle.js" defer></script>
+</head>
+<body>
+  <div class="boot-screen" id="boot-screen" aria-hidden="true">
+    <span class="boot-mark">ET</span>
+    <span class="boot-caption">Lager wird vorbereitet</span>
+    <span class="boot-line"></span>
+  </div>
+
+  <header class="topbar" id="topbar">
+    <a class="brand" href="#" aria-label="EventTech Lager Startseite">
+      <span class="brand-mark">ET</span>
+      <span class="brand-name">EVENTTECH <em>·</em> LAGER</span>
+    </a>
+    <div class="topbar-right">
+      <span class="connection-state" id="connection-state"><i></i> Nicht verbunden</span>
+      <button class="button button-quiet" id="logout-button" type="button" hidden>Abmelden</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="gate layout-width" id="gate">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="eyebrow-dot"></span> INVENTAR · IM BROWSER</p>
+        <h1>Alles da.<br><span>Alles am Platz.</span></h1>
+        <p class="hero-description">Dein Bestand an Veranstaltungstechnik – durchsuchbar, aktuell und überall dort verfügbar, wo du dich sicher anmeldest.</p>
+        <div class="trust-note"><span class="shield-icon">◆</span><span>Anmeldung über dein Supabase-Projekt. Der öffentliche GitHub-Code enthält keine Zugangsdaten.</span></div>
+      </div>
+
+      <section class="gate-card" aria-labelledby="gate-title">
+        <div class="gate-card-heading">
+          <span class="step-index">01 / VERBINDUNG</span>
+          <h2 id="gate-title">Projekt verbinden</h2>
+          <p>Trage die Projekt-URL und den öffentlichen Publishable-/anon-Key aus Supabase ein. Beides ist kein geheimer Schlüssel.</p>
+        </div>
+        <form id="config-form" class="stack-form">
+          <label>Supabase-Projekt-URL
+            <input id="project-url" name="project-url" type="url" placeholder="https://deinprojekt.supabase.co" autocomplete="url" required>
+          </label>
+          <label>Publishable-/anon-Key
+            <input id="publishable-key" name="publishable-key" type="password" placeholder="sb_publishable_… oder anon key" autocomplete="off" required>
+          </label>
+          <button class="button button-primary button-wide" type="submit">Verbindung speichern <span aria-hidden="true">↗</span></button>
+        </form>
+
+        <div class="gate-divider"><span>ANMELDUNG</span></div>
+        <form id="login-form" class="stack-form">
+          <label>E-Mail
+            <input id="email" name="email" type="email" autocomplete="username" required>
+          </label>
+          <label>Passwort
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="button button-dark button-wide" id="login-button" type="submit" disabled>Anmelden</button>
+        </form>
+        <p class="gate-footnote">Benutzerkonten werden von der Projektverwaltung angelegt. Eine öffentliche Registrierung ist nicht verfügbar.</p>
+      </section>
+    </section>
+
+    <div class="app-shell" id="app-shell" hidden>
+      <section class="hero layout-width">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-dot"></span> DEIN LAGER · LIVE BESTAND</p>
+            <h1>Alles da.<br><span>Alles am Platz.</span></h1>
+            <p class="hero-description">Finde Geräte, prüfe technische Details und verwalte deinen Bestand – direkt im Browser.</p>
+            <div class="hero-actions">
+              <button class="button button-primary" id="new-article-button" type="button">＋ Artikel anlegen</button>
+              <button class="button button-outline" id="scan-open-button" type="button"><span class="scan-icon">⌗</span> Barcode scannen</button>
+            </div>
+          </div>
+          <div class="hero-orbit" aria-hidden="true">
+            <div class="orbit-ring orbit-ring-one"></div>
+            <div class="orbit-ring orbit-ring-two"></div>
+            <div class="orbit-core"><span>ET</span><small>INVENTAR</small></div>
+            <span class="orbit-tag orbit-tag-a">SCAN READY</span>
+            <span class="orbit-tag orbit-tag-b">LIVE · SYNC</span>
+            <span class="orbit-cross orbit-cross-a">+</span>
+            <span class="orbit-cross orbit-cross-b">+</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="metrics layout-width" aria-label="Bestandsübersicht">
+        <article class="metric-card metric-primary">
+          <span class="metric-label">ARTIKEL IM BESTAND</span>
+          <strong id="metric-articles">—</strong>
+          <span class="metric-foot">Geräte &amp; Material</span>
+          <span class="metric-spark" aria-hidden="true">↗</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">LAGERORTE</span>
+          <strong id="metric-locations">—</strong>
+          <span class="metric-foot">Lager · Regale · Boxen</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">EINSATZBEREIT</span>
+          <strong id="metric-ready">—</strong>
+          <span class="metric-foot">Aktueller Gerätestatus</span>
+        </article>
+      </section>
+
+      <section class="inventory-section layout-width" id="inventory">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow eyebrow-dark">BESTAND VERWALTEN</p>
+            <h2>Deine Artikel<span class="heading-period">.</span></h2>
+          </div>
+          <button class="button button-quiet refresh-button" id="refresh-button" type="button" aria-label="Bestand neu laden"><span>↻</span> Aktualisieren</button>
+        </div>
+
+        <div class="inventory-toolbar">
+          <label class="search-field">
+            <span aria-hidden="true">⌕</span>
+            <input id="search-input" type="search" placeholder="Name, Hersteller, Modell oder Barcode suchen…" autocomplete="off">
+            <kbd>⌘ K</kbd>
+          </label>
+          <label class="select-filter">
+            <span class="sr-only">Status filtern</span>
+            <select id="status-filter">
+              <option value="">Alle Status</option>
+              <option>Einsatzbereit</option>
+              <option>Defekt</option>
+              <option>In Reparatur</option>
+              <option>Wartung erforderlich</option>
+              <option>Ausgemustert</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ARTIKEL</th><th>BARCODE</th><th>LAGERORT</th><th>STATUS</th><th class="quantity-column">MENGE</th><th></th></tr>
+            </thead>
+            <tbody id="article-rows"></tbody>
+          </table>
+          <div class="empty-state" id="empty-state" hidden>
+            <span class="empty-icon">⌕</span>
+            <strong id="empty-title">Noch keine Artikel</strong>
+            <p id="empty-copy">Lege deinen ersten Artikel an oder passe die Suche an.</p>
+            <button class="button button-primary" id="empty-create-button" type="button">＋ Artikel anlegen</button>
+          </div>
+        </div>
+        <p class="table-footnote"><span class="live-pulse"></span> Daten aus deinem Supabase-Projekt · angemeldet als <span id="signed-in-email">—</span></p>
+      </section>
+
+      <section class="locations-section layout-width" id="locations">
+        <div class="section-heading section-heading-compact">
+          <div>
+            <p class="eyebrow eyebrow-dark">ORGANISATION</p>
+            <h2>Lagerorte<span class="heading-period">.</span></h2>
+          </div>
+          <button class="button button-quiet" id="manage-locations-button" type="button">＋ Lagerort verwalten</button>
+        </div>
+        <div class="location-grid" id="location-cards"></div>
+      </section>
+
+      <section class="web-note layout-width" id="setup">
+        <span class="note-mark">i</span>
+        <div>
+          <strong>Browser-App · Kernfunktionen</strong>
+          <p>Artikel und Lagerorte lassen sich hier suchen, ansehen und bearbeiten. DMX-Modi und -Kanäle werden in den Artikeldetails angezeigt. Reparaturen, Inventuren und die visuelle Regal-Grafik bleiben vorerst in der Desktop-App verfügbar.</p>
+        </div>
+        <a href="https://github.com/gggamingkarotte-byte/EventTechBarcodeManager#github-pages-web-app" target="_blank" rel="noreferrer">Setup-Anleitung ↗</a>
+      </section>
+    </div>
+  </main>
+
+  <footer class="footer layout-width">
+    <span>EVENTTECH <em>·</em> LAGER</span>
+    <span>Für die Technik, die Veranstaltungen möglich macht.</span>
+    <a href="https://github.com/gggamingkarotte-byte/EventTechBarcodeManager" target="_blank" rel="noreferrer">OPEN SOURCE ↗</a>
+  </footer>
+
+  <dialog class="modal" id="article-dialog" aria-labelledby="article-dialog-title">
+    <form class="modal-form" id="article-form">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow eyebrow-dark">ARTIKELSTAMMDATEN</p>
+          <h2 id="article-dialog-title">Artikel anlegen<span class="heading-period">.</span></h2>
+        </div>
+        <button class="icon-button" type="button" data-close="article-dialog" aria-label="Schließen">×</button>
+      </div>
+      <div class="form-grid">
+        <label class="span-two">Artikelname *
+          <input name="name" required maxlength="160" autocomplete="off">
+        </label>
+        <label>Hersteller
+          <input name="manufacturer" maxlength="120">
+        </label>
+        <label>Modell
+          <input name="model" maxlength="120">
+        </label>
+        <label>Kategorie
+          <input name="category" maxlength="100" placeholder="z. B. Scheinwerfer">
+        </label>
+        <label>Barcode
+          <input name="barcode" maxlength="160" autocomplete="off">
+        </label>
+        <label>Menge
+          <input name="quantity" type="number" min="0" step="1" value="1" required>
+        </label>
+        <label>Status
+          <select name="status">
+            <option>Einsatzbereit</option>
+            <option>Defekt</option>
+            <option>In Reparatur</option>
+            <option>Wartung erforderlich</option>
+            <option>Ausgemustert</option>
+          </select>
+        </label>
+        <label class="span-two">Lagerplatz
+          <select name="box_id" id="article-box-select">
+            <option value="">Kein Lagerplatz</option>
+          </select>
+        </label>
+        <label class="span-two">Beschreibung
+          <textarea name="description" rows="3" maxlength="3000"></textarea>
+        </label>
+        <label class="span-two">Technische Daten
+          <textarea name="technical_data" rows="4" maxlength="6000"></textarea>
+        </label>
+      </div>
+      <section class="dmx-details" id="dmx-details" hidden>
+        <div class="dmx-heading"><span class="dmx-icon">⌁</span><div><strong>DMX-Modi &amp; Kanäle</strong><small>Technische Übersicht · Bearbeitung in der Desktop-App</small></div></div>
+        <div id="dmx-mode-list"></div>
+      </section>
+      <div class="modal-actions">
+        <button class="button button-quiet" type="button" data-close="article-dialog">Abbrechen</button>
+        <button class="button button-primary" id="article-save-button" type="submit">Artikel speichern <span aria-hidden="true">↗</span></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal location-modal" id="location-dialog" aria-labelledby="location-dialog-title">
+    <form class="modal-form" id="location-form">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow eyebrow-dark">LAGERSTRUKTUR</p>
+          <h2 id="location-dialog-title">Lagerort verwalten<span class="heading-period">.</span></h2>
+        </div>
+        <button class="icon-button" type="button" data-close="location-dialog" aria-label="Schließen">×</button>
+      </div>
+      <div class="form-grid">
+        <label>Art des Lagerorts
+          <select id="location-type" name="type">
+            <option value="warehouses">Lager</option>
+            <option value="racks">Regal</option>
+            <option value="levels">Boden</option>
+            <option value="boxes">Box</option>
+          </select>
+        </label>
+        <label>Vorhandenen Lagerort bearbeiten
+          <select id="location-existing" name="existing">
+            <option value="">Neuen Lagerort anlegen</option>
+          </select>
+        </label>
+        <label class="span-two">Name *
+          <input id="location-name" name="name" required maxlength="160" autocomplete="off">
+        </label>
+        <label class="span-two" id="location-parent-field" hidden>
+          <span id="location-parent-label">Übergeordneter Lagerort</span>
+          <select id="location-parent" name="parent_id"></select>
+        </label>
+        <label id="location-barcode-field" class="span-two">Barcode
+          <input id="location-barcode" name="barcode" maxlength="160" autocomplete="off">
+        </label>
+        <label id="location-width-field">Breite (cm)
+          <input id="location-width" name="width_cm" type="number" min="1" max="2000" step="1">
+        </label>
+        <label id="location-height-field"><span id="location-height-label">Höhe (cm)</span>
+          <input id="location-height" name="height_cm" type="number" min="1" max="2000" step="1">
+        </label>
+        <label class="span-two" id="location-description-field">Beschreibung
+          <textarea id="location-description" name="description" rows="3" maxlength="2000"></textarea>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="button button-quiet" type="button" data-close="location-dialog">Schließen</button>
+        <button class="button button-primary" id="location-save-button" type="submit">Lagerort speichern <span aria-hidden="true">↗</span></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal scanner-modal" id="scanner-dialog" aria-labelledby="scanner-title">
+    <div class="scanner-content">
+      <div class="modal-heading">
+        <div><p class="eyebrow eyebrow-dark">KAMERA-SCAN</p><h2 id="scanner-title">Barcode erfassen<span class="heading-period">.</span></h2></div>
+        <button class="icon-button" type="button" data-close="scanner-dialog" aria-label="Schließen">×</button>
+      </div>
+      <div class="camera-frame"><video id="scanner-video" muted playsinline></video><span class="scan-frame" aria-hidden="true"></span><p id="scanner-message">Kamera wird vorbereitet …</p></div>
+      <div class="manual-scan">
+        <label for="manual-barcode">Oder Barcode manuell / mit USB-Scanner eingeben</label>
+        <form id="manual-scan-form"><input id="manual-barcode" autocomplete="off" placeholder="Barcode scannen oder eingeben"><button class="button button-primary" type="submit">Suchen</button></form>
+      </div>
+      <p class="scanner-footnote">Die Kamera funktioniert nur über HTTPS und benötigt deine Freigabe. Bilder werden nicht gespeichert oder übertragen.</p>
+    </div>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+</body>
+</html>

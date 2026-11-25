@@ -13,3 +13,5 @@ supabase/Password-*.txt
 .env
 .env.*
 !.env.example
+web/node_modules/
+web/app.bundle.js

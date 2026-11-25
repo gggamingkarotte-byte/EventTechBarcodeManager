@@ -4,7 +4,7 @@ import sys
 
 
 APP_NAME = "EventTech Barcode Manager"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.1.0"
 
 
 def app_dir() -> Path:

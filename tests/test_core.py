@@ -6,13 +6,14 @@ import base64
 import json
 import sqlite3
 import re
+import ssl
 import urllib.error
 import urllib.request
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from database.database import Database
-from modules.inventory import create_article, duplicate_article
+from modules.inventory import create_article, duplicate_article, update_article
 from modules.barcode import validate_ean13, generate_unique_code, render_barcode_png, create_label_pdf
 from modules.scanner import ScannerReader
 from modules.dmx import create_mode, set_channel
@@ -22,6 +23,9 @@ import zxingcpp
 from PIL import Image
 from modules.cloud_sync import apply_cloud_snapshot, canonical_json, local_snapshot, plan_sync
 from modules.secret_store import protect_secret, unprotect_secret
+from modules.usage_guides import (
+    GUIDE_END, GUIDE_START, has_auto_usage_guide, update_auto_usage_guide,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -245,6 +249,127 @@ class CoreTests(unittest.TestCase):
         reader = ScannerReader(prefix="PX", suffix="\r")
         self.assertEqual(reader.process("PX12345\r"), "12345")
 
+    def test_auto_usage_guide_appends_category_tips_and_updates_without_duplicates(self):
+        technical_data = update_auto_usage_guide(
+            "Leistung: 300 W",
+            enabled=True,
+            name="Moving Head",
+            manufacturer="Cameo",
+            model="HydraBeam 400",
+            category="Scheinwerfer",
+        )
+        self.assertIn("Leistung: 300 W", technical_data)
+        self.assertIn("Allgemeine Bedienhinweise – Lichttechnik", technical_data)
+        self.assertTrue(has_auto_usage_guide(technical_data))
+        self.assertEqual(technical_data.count(GUIDE_START), 1)
+
+        updated = update_auto_usage_guide(
+            technical_data,
+            enabled=True,
+            name="Moving Head",
+            manufacturer="Cameo",
+            model="HydraBeam 500",
+            category="Scheinwerfer",
+        )
+        self.assertEqual(updated.count(GUIDE_START), 1)
+        self.assertIn("HydraBeam+500", updated)
+        self.assertNotIn("HydraBeam+400", updated)
+        self.assertTrue(updated.rstrip().endswith(GUIDE_END))
+
+    def test_disabling_auto_usage_guide_removes_only_generated_section(self):
+        technical_data = update_auto_usage_guide(
+            "Eigene technische Daten",
+            enabled=True,
+            name="Lautsprecher",
+            category="Audio",
+        )
+        without_guide = update_auto_usage_guide(technical_data, enabled=False)
+        self.assertEqual(without_guide, "Eigene technische Daten")
+        self.assertFalse(has_auto_usage_guide(without_guide))
+
+    def test_article_form_saves_and_updates_auto_usage_guide(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from main import ArticleDialog
+
+        app = QApplication.instance() or QApplication([])
+        dialog = ArticleDialog(self.db)
+        dialog.name.setText("Moving Head")
+        dialog.manufacturer.setText("Cameo")
+        dialog.model.setText("HydraBeam 400")
+        dialog.category.setText("Scheinwerfer")
+        dialog.technical.setPlainText("Leistung: 300 W")
+        self.assertFalse(dialog.auto_usage_guide.isChecked())
+        dialog.auto_usage_guide.setChecked(True)
+        article_id = create_article(self.db, dialog.data())
+
+        article = dict(self.db.query("SELECT * FROM articles WHERE id=?", (article_id,))[0])
+        edit_dialog = ArticleDialog(self.db, article)
+        self.assertTrue(edit_dialog.auto_usage_guide.isChecked())
+        edit_dialog.model.setText("HydraBeam 500")
+        update_article(self.db, article_id, edit_dialog.data())
+
+        updated = self.db.query("SELECT technical_data FROM articles WHERE id=?", (article_id,))[0]
+        self.assertEqual(updated["technical_data"].count(GUIDE_START), 1)
+        self.assertIn("HydraBeam+500", updated["technical_data"])
+        edit_dialog = ArticleDialog(
+            self.db,
+            dict(self.db.query("SELECT * FROM articles WHERE id=?", (article_id,))[0]),
+        )
+        edit_dialog.auto_usage_guide.setChecked(False)
+        update_article(self.db, article_id, edit_dialog.data())
+        final_data = self.db.query("SELECT technical_data FROM articles WHERE id=?", (article_id,))[0]
+        self.assertEqual(final_data["technical_data"], "Leistung: 300 W")
+        self.assertFalse(edit_dialog.auto_usage_guide.isChecked())
+
+    def test_article_form_creates_and_edits_dmx_modes_and_channels(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from main import ArticleDialog, DmxModesDialog
+
+        app = QApplication.instance() or QApplication([])
+        article_dialog = ArticleDialog(self.db)
+        article_dialog.name.setText("Moving Head")
+        dmx_dialog = DmxModesDialog([], article_dialog)
+        with patch("main.QInputDialog.getText", return_value=("Basic", True)):
+            with patch("main.QInputDialog.getInt", return_value=(3, True)):
+                dmx_dialog._add_mode()
+        dmx_dialog._add_channel()
+        dmx_dialog.channel_table.item(0, 1).setText("Pan")
+        dmx_dialog._accept_changes()
+        article_dialog.dmx_modes = dmx_dialog.modes
+
+        article_id = create_article(self.db, article_dialog.data())
+        mode = dict(self.db.query(
+            "SELECT id,name,channel_count FROM dmx_modes WHERE article_id=?",
+            (article_id,),
+        )[0])
+        channel = dict(self.db.query(
+            "SELECT id,channel_number,function_name FROM dmx_channels WHERE mode_id=?",
+            (mode["id"],),
+        )[0])
+        self.assertEqual((mode["name"], mode["channel_count"]), ("Basic", 3))
+        self.assertEqual((channel["channel_number"], channel["function_name"]), (1, "Pan"))
+
+        edit_dialog = ArticleDialog(
+            self.db,
+            dict(self.db.query("SELECT * FROM articles WHERE id=?", (article_id,))[0]),
+        )
+        self.assertEqual(edit_dialog.dmx_modes[0]["id"], mode["id"])
+        edit_dialog.dmx_modes[0]["name"] = "Extended"
+        edit_dialog.dmx_modes[0]["channels"][0]["function_name"] = "Tilt"
+        update_article(self.db, article_id, edit_dialog.data())
+        updated_mode = self.db.query(
+            "SELECT id,name FROM dmx_modes WHERE article_id=?",
+            (article_id,),
+        )[0]
+        updated_channel = self.db.query(
+            "SELECT id,function_name FROM dmx_channels WHERE mode_id=?",
+            (mode["id"],),
+        )[0]
+        self.assertEqual((updated_mode["id"], updated_mode["name"]), (mode["id"], "Extended"))
+        self.assertEqual((updated_channel["id"], updated_channel["function_name"]), (channel["id"], "Tilt"))
+
     def test_dmx_mode_and_channel(self):
         article_id = create_article(self.db, {"name": "Moving Head"})
         mode_id = create_mode(self.db, article_id, "Basic", 9)
@@ -397,13 +522,35 @@ class CoreTests(unittest.TestCase):
 
     def test_ipad_scanner_requires_pairing_token_and_receives_barcode(self):
         received = []
-        server = IpadScannerServer(received.append, host="127.0.0.1")
+        certificate_dir = Path(self.tempdir.name) / "scanner-certificate"
+        server = IpadScannerServer(
+            received.append, host="127.0.0.1",
+            certificate_dir=certificate_dir, certificate_hosts=["127.0.0.1"],
+        )
         server.start()
         try:
             url = f"http://127.0.0.1:{server.port}/?key={server.token}"
             with urllib.request.urlopen(url, timeout=3) as response:
                 self.assertEqual(response.status, 200)
-                self.assertIn(b"EventTech Scanner", response.read())
+                page = response.read()
+                self.assertIn(b"EventTech Scanner", page)
+                self.assertIn(b"getUserMedia", page)
+                self.assertIn(b'id="preview"', page)
+                self.assertIn(b"https://127.0.0.1:", page)
+            certificate_url = (
+                f"http://127.0.0.1:{server.port}/certificate?key={server.token}"
+            )
+            with urllib.request.urlopen(certificate_url, timeout=3) as response:
+                certificate = response.read()
+                self.assertIn(b"BEGIN CERTIFICATE", certificate)
+            protected_ca_key = (certificate_dir / "ca-key.pem").read_text(encoding="ascii")
+            self.assertNotIn("PRIVATE KEY", protected_ca_key)
+            self.assertIn("PRIVATE KEY", unprotect_secret(protected_ca_key))
+            secure_context = ssl.create_default_context(cadata=certificate.decode("ascii"))
+            secure_url = f"https://127.0.0.1:{server.https_port}/?key={server.token}"
+            with urllib.request.urlopen(secure_url, context=secure_context, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(b"getUserMedia", response.read())
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.port}/api/scan",
                 data=json.dumps({"code": "ET-123"}).encode(),
@@ -428,7 +575,12 @@ class CoreTests(unittest.TestCase):
 
     def test_ipad_scanner_decodes_camera_image_locally(self):
         received = []
-        server = IpadScannerServer(received.append, host="127.0.0.1")
+        server = IpadScannerServer(
+            received.append,
+            host="127.0.0.1",
+            certificate_dir=Path(self.tempdir.name) / "scanner-certificate",
+            certificate_hosts=["127.0.0.1"],
+        )
         server.start()
         try:
             def decode_image(image):

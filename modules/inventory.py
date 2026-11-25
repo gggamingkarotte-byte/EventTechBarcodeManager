@@ -1,10 +1,13 @@
 import json
 
+from modules.dmx import save_article_modes, validate_article_modes
+
 
 ARTICLE_STATUSES = ("Einsatzbereit", "Defekt", "In Reparatur", "Wartung erforderlich", "Ausgemustert")
 
 
 def create_article(db, data: dict) -> int:
+    dmx_modes = validate_article_modes(data.get("dmx_modes", [])) if "dmx_modes" in data else None
     barcode = (data.get("barcode") or "").strip()
     if barcode:
         if db.query("SELECT 1 FROM articles WHERE barcode=?", (barcode,)) or db.query(
@@ -25,6 +28,8 @@ def create_article(db, data: dict) -> int:
         ),
     )
     article_id = cursor.lastrowid
+    if dmx_modes is not None:
+        save_article_modes(db, article_id, dmx_modes)
     if barcode:
         db.execute(
             "INSERT INTO barcodes(code,code_type,article_id,entity_type,entity_id) VALUES(?,?,?,?,?)",
@@ -34,6 +39,7 @@ def create_article(db, data: dict) -> int:
 
 
 def update_article(db, article_id: int, data: dict):
+    dmx_modes = validate_article_modes(data["dmx_modes"]) if "dmx_modes" in data else None
     barcode = (data.get("barcode") or "").strip()
     if barcode:
         row = db.query("SELECT id FROM articles WHERE barcode=? AND id<>?", (barcode, article_id))
@@ -58,6 +64,8 @@ def update_article(db, article_id: int, data: dict):
             "INSERT INTO barcodes(code,code_type,article_id,entity_type,entity_id) VALUES(?,?,?,?,?)",
             (barcode, data.get("barcode_type", "Code 128"), article_id, "article", article_id),
         )
+    if dmx_modes is not None:
+        save_article_modes(db, article_id, dmx_modes)
 
 
 def delete_article(db, article_id: int):
