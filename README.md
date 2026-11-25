@@ -85,10 +85,12 @@ aktualisiert werden.
 
 ## GitHub-Pages-Web-App
 
-Eine browserbasierte Kernversion liegt im Ordner `web`. Sie unterstützt Anmeldung, Artikelsuche,
-Artikelanlage und -bearbeitung, das Anlegen/Bearbeiten von Lagern, Regalen, Böden und Boxen,
-Lagerplatzzuordnung, DMX-Details sowie Barcode-Suche per Kamera oder USB-/Bluetooth-Scanner. Reparaturen,
-Inventuren und die visuelle Regal-Grafik bleiben in der Desktop-App.
+Die browserbasierte App im Ordner `web` unterstützt Anmeldung, Artikelsuche und -bearbeitung,
+Lagerstruktur und Regal-Grafik, DMX-Modi und -Kanäle, Reparaturen, Inventuren, Scan-Verlauf,
+optionale automatische Bedienhinweise, Barcode-Erzeugung und Etikettendruck, CSV-Export sowie JSON-Backup.
+Die Kamera kann auf unterstützten
+Geräten als Scanner verwendet werden; USB-/Bluetooth-HID-Scanner funktionieren über das Eingabefeld.
+Fotos und Dokumente lassen sich für Web-Nutzer privat in Supabase speichern.
 
 Die Webseite wird statisch über GitHub Pages ausgeliefert. Artikeldaten bleiben in Supabase; die Webseite
 verwendet Supabase Auth und legt weder den `service_role`-Key noch den Desktop-Organisationsschlüssel im
@@ -104,14 +106,16 @@ Benutzerkonten anlegen.
 2. Führe anschließend `supabase\migrations\202611240001_eventtech_web_auth.sql` im SQL Editor aus.
    Diese Migration erlaubt angemeldeten Benutzern das Lesen und stellt eine geschützte RPC für Änderungen
    bereit; direkte Schreibrechte auf der Synchronisierungstabelle werden nicht vergeben.
-3. Aktiviere in Supabase **Authentication → Providers → Email** und deaktiviere öffentliche Registrierungen.
+3. Führe `supabase\migrations\202611250001_eventtech_web_attachments.sql` aus. Sie erstellt den privaten
+   Datei-Bucket und die Metadatentabelle für Web-Anhänge (bis zu 20 MB pro Datei).
+4. Aktiviere in Supabase **Authentication → Providers → Email** und deaktiviere öffentliche Registrierungen.
    Lege die benötigten Benutzer im Supabase-Dashboard unter **Authentication → Users** an bzw. lade sie ein.
-4. Ergänze unter **Authentication → URL Configuration** die GitHub-Pages-Adresse als Site URL und erlaubte
+5. Ergänze unter **Authentication → URL Configuration** die GitHub-Pages-Adresse als Site URL und erlaubte
    Redirect URL: `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/`.
-5. Öffne im GitHub-Repository **Settings → Pages** und wähle **GitHub Actions** als Build-/Deployment-Quelle.
+6. Öffne im GitHub-Repository **Settings → Pages** und wähle **GitHub Actions** als Build-/Deployment-Quelle.
    Der Workflow `.github\workflows\deploy-web.yml` veröffentlicht den Ordner `web` automatisch nach Pushes
    auf `main`; ein manueller Start ist auch unter **Actions → Deploy inventory web app → Run workflow** möglich.
-6. Rufe `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/` auf. Gib einmalig die Supabase-
+7. Rufe `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/` auf. Gib einmalig die Supabase-
    Projekt-URL und den öffentlichen Publishable-/anon-Key ein und melde dich mit einem angelegten Benutzer an.
    Projektkonfiguration und Sitzung werden nur im lokalen Browser gespeichert; auf gemeinsam genutzten
    Geräten nach der Nutzung abmelden.
@@ -128,29 +132,22 @@ gespeichert oder an Dritte übertragen.
 
 ## Regal-Grafik
 
-Unter **Regal-Grafik** kannst du ein Lager und ein Regal auswählen. Regale lassen sich mit Breite,
-Gesamthöhe und gewünschter Bodenanzahl anlegen. Unter **Maße / Böden bearbeiten** kannst du danach
-Regalmaße sowie Namen und lichte Höhe der einzelnen Böden anpassen oder leere Böden hinzufügen.
-Ziehe Boxen auf einen anderen Boden und Artikel/Lampen auf eine andere Box, um sie innerhalb des Regals
-umzulagern. Mit **Umlagern …** verschiebst du sie auch zwischen verschiedenen Regalen desselben Lagers.
+Unter **Regal-Grafik** kannst du ein Lager und Regal auswählen und die enthaltenen Böden, Boxen und Artikel
+überblicken. Artikel lassen sich am Desktop per Drag-and-drop zwischen den angezeigten Boxen verschieben.
+Weitere Lager, Regale, Böden und Boxen verwaltest du über **Lagerort verwalten**; Artikel können außerdem
+im Bearbeitungsformular einem beliebigen Lagerplatz zugeordnet werden.
 
-## Barcode-Dokumente
+## Barcode-Werkstatt
 
-Unter **Barcode-Programmierung → PDF gestalten** lassen sich mehrere gleiche oder unterschiedliche Codes
-mit eigener Bezeichnung und Skalierung zu einem PDF hinzufügen. In der A4-Vorschau kannst du einen Barcode
-mit der Maus verschieben und ihn an den Eckgriffen wie ein Bild in Word proportional vergrößern oder
-verkleinern. Gerätename und Barcode-Wert bleiben dabei mittig am Barcode ausgerichtet und skalieren mit.
-Ein Rahmen um die Etiketten wird nicht gedruckt. Der Gerätename steht über dem Barcode, der Barcode-Wert
-genau einmal darunter. Größere Dokumente verteilen sich automatisch auf mehrere Seiten. Einzelne Barcodes
-können als PNG heruntergeladen werden. In der **Barcode-Liste** lassen sich gespeicherte Codes ansehen,
-konfigurieren, zum PDF hinzufügen, als PNG herunterladen und eigene Einträge löschen. In beiden Listen
-kannst du mehrere Codes bzw. Etiketten mit Strg/Umschalt auswählen. Mehrere Codes aus der Barcode-Liste
-lassen sich gemeinsam zum PDF hinzufügen; für ausgewählte Etiketten im PDF-Raster kann die Skalierung
-mit einem Klick gemeinsam geändert werden.
+In der **Barcode-Werkstatt** kannst du Code 128-, EAN-13- und QR-Barcodes erstellen, optional einen eigenen
+Inhalt angeben, sie Artikeln zuweisen und als PNG herunterladen. Gespeicherte Codes lassen sich zur
+Druckliste hinzufügen. Mit **PDF drucken / speichern** öffnet der Browser eine A4-Druckansicht; dort kann
+über die Druckfunktion des Browsers ein PDF gespeichert werden.
 
 Synchronisiert werden Artikel, Lagerplätze, Barcodes, DMX-Daten, Reparaturen, Bewegungen, Scan-Verlauf und
-Inventuren. Fotos und lokal gespeicherte Dokumentdateien werden derzeit **nicht** in die Cloud kopiert;
-sie bleiben nur auf dem PC verfügbar, auf dem sie importiert wurden. Der kostenlose Supabase-Tarif hat
+Inventuren. Web-Anhänge liegen privat im Supabase-Storage und können von allen angemeldeten Benutzern des
+gemeinsamen Inventars gelesen und verwaltet werden. Dateien, die ausschließlich in der Desktop-App importiert
+wurden, bleiben lokal und werden nicht automatisch in diesen Web-Speicher übernommen. Der kostenlose Supabase-Tarif hat
 änderbare Speicher-/Nutzungslimits und ersetzt kein zusätzliches Backup.
 
 ## Tests

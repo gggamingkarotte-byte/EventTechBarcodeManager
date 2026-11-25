@@ -109,6 +109,35 @@
         </article>
       </section>
 
+      <nav class="workspace-nav layout-width" aria-label="Bereiche">
+        <a href="#overview">Übersicht</a>
+        <a href="#inventory">Artikel</a>
+        <a href="#locations">Lager</a>
+        <a href="#rack-graphic">Regal-Grafik</a>
+        <a href="#stocktaking">Inventur</a>
+        <a href="#repairs">Reparaturen</a>
+        <a href="#barcode-tools">Barcodes</a>
+        <a href="#scan-history">Scan-Verlauf</a>
+        <a href="#web-settings">Einstellungen</a>
+      </nav>
+
+      <section class="feature-section layout-width" id="overview">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow eyebrow-dark">AKTUELLE AKTIVITÄT</p>
+            <h2>Letzte Scans<span class="heading-period">.</span></h2>
+          </div>
+          <button class="button button-quiet" id="dashboard-scan-button" type="button">Barcode scannen</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ZEIT</th><th>BARCODE</th><th>ARTIKEL</th><th>LAGERORT</th><th>SCAN-ART</th><th>AKTION</th></tr></thead>
+            <tbody id="dashboard-scans"></tbody>
+          </table>
+          <div class="empty-state" id="dashboard-scans-empty" hidden><strong>Noch keine Scans</strong><p>Scans werden hier automatisch angezeigt.</p></div>
+        </div>
+      </section>
+
       <section class="inventory-section layout-width" id="inventory">
         <div class="section-heading">
           <div>
@@ -164,11 +193,119 @@
         <div class="location-grid" id="location-cards"></div>
       </section>
 
+      <section class="feature-section layout-width" id="rack-graphic">
+        <div class="section-heading">
+          <div><p class="eyebrow eyebrow-dark">LAGERSTRUKTUR</p><h2>Regal-Grafik<span class="heading-period">.</span></h2></div>
+          <button class="button button-quiet" id="rack-manage-button" type="button">Lagerstruktur verwalten</button>
+        </div>
+        <div class="feature-toolbar">
+          <label>Lager<select id="rack-warehouse-select"></select></label>
+          <label>Regal<select id="rack-select"></select></label>
+        </div>
+        <div class="rack-visual" id="rack-visual"></div>
+      </section>
+
+      <section class="feature-section layout-width" id="stocktaking">
+        <div class="section-heading">
+          <div><p class="eyebrow eyebrow-dark">BESTANDSPRÜFUNG</p><h2>Inventur<span class="heading-period">.</span></h2></div>
+          <div class="feature-actions">
+            <button class="button button-quiet" id="inventory-export-button" type="button">CSV exportieren</button>
+            <button class="button button-primary" id="inventory-start-button" type="button">＋ Inventur starten</button>
+          </div>
+        </div>
+        <div class="feature-toolbar">
+          <label>Aktive Inventur<select id="inventory-session-select"><option value="">Keine Inventur</option></select></label>
+          <label>Lager für neue Inventur<select id="inventory-warehouse-select"></select></label>
+        </div>
+        <form class="scan-entry" id="inventory-scan-form">
+          <label for="inventory-barcode">Barcode erfassen</label>
+          <input id="inventory-barcode" autocomplete="off" placeholder="Barcode scannen oder eingeben">
+          <button class="button button-primary" type="submit">Erfassen</button>
+          <button class="button button-quiet" id="inventory-camera-button" type="button">Kamera öffnen</button>
+          <button class="button button-quiet" id="inventory-finish-button" type="button">Inventur abschließen</button>
+        </form>
+        <div class="table-wrap"><table><thead><tr><th>BARCODE</th><th>ARTIKEL</th><th>SOLL</th><th>IST</th><th>ABWEICHUNG</th></tr></thead><tbody id="inventory-rows"></tbody></table></div>
+      </section>
+
+      <section class="feature-section layout-width" id="repairs">
+        <div class="section-heading">
+          <div><p class="eyebrow eyebrow-dark">SERVICE &amp; WARTUNG</p><h2>Reparaturen<span class="heading-period">.</span></h2></div>
+          <button class="button button-primary" id="repair-add-button" type="button">＋ Reparatur eintragen</button>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>DATUM</th><th>ARTIKEL</th><th>FEHLER</th><th>SCHADENSART</th><th>MASSNAHMEN</th><th>KOSTEN</th><th>STATUS</th><th>ABSCHLUSS</th></tr></thead><tbody id="repair-rows"></tbody></table></div>
+      </section>
+
+      <section class="feature-section layout-width" id="barcode-tools">
+        <div class="section-heading">
+          <div><p class="eyebrow eyebrow-dark">ETIKETTEN &amp; CODES</p><h2>Barcode-Werkstatt<span class="heading-period">.</span></h2></div>
+          <button class="button button-quiet" id="barcode-pdf-button" type="button">PDF drucken / speichern</button>
+        </div>
+        <div class="barcode-workbench">
+          <form id="barcode-generator-form" class="barcode-generator">
+            <label>Barcode-Typ<select id="barcode-type"><option>Code 128</option><option>EAN-13</option><option>QR</option></select></label>
+            <label>Bezeichnung<input id="barcode-label" maxlength="160" placeholder="z. B. Cameo Scheinwerfer"></label>
+            <label>Inhalt (optional)<input id="barcode-custom-value" maxlength="160" placeholder="Leer lassen für automatische Nummer"></label>
+            <label>Artikel zuweisen<select id="barcode-article"><option value="">Nicht zugewiesen</option></select></label>
+            <label>Anzahl für PDF<input id="barcode-copies" type="number" min="1" max="200" value="1"></label>
+            <div class="barcode-actions">
+              <button class="button button-primary" type="submit">Barcode generieren</button>
+              <button class="button button-quiet" id="barcode-save-button" type="button">In Liste speichern</button>
+              <button class="button button-quiet" id="barcode-download-button" type="button">PNG herunterladen</button>
+              <button class="button button-quiet" id="barcode-add-pdf-button" type="button">Zum PDF-Raster</button>
+            </div>
+            <output class="barcode-preview" id="barcode-preview"><span>Noch kein Barcode generiert</span></output>
+            <input id="barcode-value" type="text" readonly aria-label="Generierter Barcode-Wert">
+          </form>
+          <div class="barcode-library">
+            <div class="subsection-heading"><h3>Barcode-Liste</h3><span id="barcode-count">0 Einträge</span></div>
+            <div class="table-wrap"><table><thead><tr><th>NAME</th><th>CODE</th><th>TYP</th><th>ZUORDNUNG</th><th></th></tr></thead><tbody id="barcode-rows"></tbody></table></div>
+            <div class="subsection-heading pdf-heading"><h3>PDF-Inhalt</h3><button class="button button-quiet" id="barcode-pdf-clear-button" type="button">Leeren</button></div>
+            <div class="table-wrap"><table><thead><tr><th>NAME</th><th>CODE</th><th>TYP</th><th></th></tr></thead><tbody id="barcode-pdf-rows"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature-section layout-width" id="scan-history">
+        <div class="section-heading">
+          <div><p class="eyebrow eyebrow-dark">ERFASSUNG</p><h2>Scan-Verlauf<span class="heading-period">.</span></h2></div>
+          <button class="button button-quiet" id="scan-export-button" type="button">CSV exportieren</button>
+        </div>
+        <label class="search-field history-search"><span aria-hidden="true">⌕</span><input id="scan-search" type="search" placeholder="Barcode, Artikel oder Aktion suchen …"></label>
+        <div class="table-wrap"><table><thead><tr><th>ZEIT</th><th>BARCODE</th><th>ARTIKEL</th><th>LAGERORT</th><th>SCAN-ART</th><th>AKTION</th></tr></thead><tbody id="scan-rows"></tbody></table></div>
+      </section>
+
+      <section class="feature-section layout-width" id="web-settings">
+        <div class="section-heading">
+          <div><p class="eyebrow eyebrow-dark">KONTO &amp; DATEN</p><h2>Einstellungen<span class="heading-period">.</span></h2></div>
+        </div>
+        <div class="settings-grid">
+          <article class="settings-card">
+            <h3>Scanner</h3>
+            <label>Kamera auswählen<select id="camera-device-select"><option value="">Automatisch wählen</option></select></label>
+            <label>Scanner-Präfix<input id="scanner-prefix" maxlength="32" autocomplete="off"></label>
+            <label>Scanner-Suffix<input id="scanner-suffix" maxlength="32" autocomplete="off"></label>
+            <p>USB-/Bluetooth-HID-Scanner funktionieren wie eine Tastatur im fokussierten Scan-Feld. Kamera-Auswahl und -Freigabe sind browserabhängig.</p>
+            <button class="button button-quiet" id="camera-refresh-button" type="button">Kameras suchen</button>
+          </article>
+          <article class="settings-card">
+            <h3>Datensicherung</h3>
+            <p>Exportiert den aktuellen Cloud-Bestand als JSON-Datei. Ein Import führt die enthaltenen Datensätze mit dem Bestand zusammen.</p>
+            <div class="feature-actions"><button class="button button-quiet" id="backup-export-button" type="button">Backup herunterladen</button><button class="button button-quiet" id="backup-import-button" type="button">Backup wiederherstellen</button></div>
+            <input id="backup-file-input" type="file" accept="application/json,.json" hidden>
+          </article>
+          <article class="settings-card">
+            <h3>Angemeldet</h3>
+            <p id="settings-account">—</p>
+            <button class="button button-quiet" id="settings-logout-button" type="button">Abmelden</button>
+          </article>
+        </div>
+      </section>
+
       <section class="web-note layout-width" id="setup">
         <span class="note-mark">i</span>
         <div>
-          <strong>Browser-App · Kernfunktionen</strong>
-          <p>Artikel und Lagerorte lassen sich hier suchen, ansehen und bearbeiten. DMX-Modi und -Kanäle werden in den Artikeldetails angezeigt. Reparaturen, Inventuren und die visuelle Regal-Grafik bleiben vorerst in der Desktop-App verfügbar.</p>
+          <strong>Browser-App · gemeinsame Cloud-Daten</strong>
+          <p>Die Web-App verwaltet dieselben Cloud-Datensätze wie die Desktop-App. Kamera-, Datei- und Druckfunktionen hängen von Browser und Gerät ab.</p>
         </div>
         <a href="https://github.com/gggamingkarotte-byte/EventTechBarcodeManager#github-pages-web-app" target="_blank" rel="noreferrer">Setup-Anleitung ↗</a>
       </section>
@@ -230,13 +367,50 @@
           <textarea name="technical_data" rows="4" maxlength="6000"></textarea>
         </label>
       </div>
-      <section class="dmx-details" id="dmx-details" hidden>
-        <div class="dmx-heading"><span class="dmx-icon">⌁</span><div><strong>DMX-Modi &amp; Kanäle</strong><small>Technische Übersicht · Bearbeitung in der Desktop-App</small></div></div>
+      <label class="usage-guide-toggle" title="Ergänzt allgemeine Hinweise passend zu Kategorie und Produkt sowie einen Link zur Herstellersuche.">
+        <input id="article-auto-usage-guide" name="auto_usage_guide" type="checkbox">
+        <span>Bedienhinweise automatisch ergänzen</span>
+      </label>
+      <section class="dmx-details" id="dmx-details">
+        <div class="dmx-heading"><span class="dmx-icon">⌁</span><div><strong>DMX-Modi &amp; Kanäle</strong><small>Modi, Kanalzahl und Kanalbelegung verwalten</small></div>
+          <button class="button button-quiet" id="dmx-add-mode-button" type="button">＋ DMX-Modus</button>
+        </div>
         <div id="dmx-mode-list"></div>
+      </section>
+      <section class="article-attachments" id="article-attachments">
+        <div class="subsection-heading"><h3>Fotos &amp; Dokumente</h3></div>
+        <label class="attachment-upload">Dateien zum Artikel hinzufügen
+          <input id="article-files-input" type="file" multiple disabled>
+        </label>
+        <p class="attachment-note" id="article-files-note">Speichere den Artikel zuerst, um Fotos und Dokumente hinzuzufügen.</p>
+        <div id="article-files-list" class="attachment-list"></div>
       </section>
       <div class="modal-actions">
         <button class="button button-quiet" type="button" data-close="article-dialog">Abbrechen</button>
         <button class="button button-primary" id="article-save-button" type="submit">Artikel speichern <span aria-hidden="true">↗</span></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="repair-dialog" aria-labelledby="repair-dialog-title">
+    <form class="modal-form" id="repair-form">
+      <div class="modal-heading">
+        <div><p class="eyebrow eyebrow-dark">SERVICE &amp; WARTUNG</p><h2 id="repair-dialog-title">Reparatur erfassen<span class="heading-period">.</span></h2></div>
+        <button class="icon-button" type="button" data-close="repair-dialog" aria-label="Schließen">×</button>
+      </div>
+      <div class="form-grid">
+        <label class="span-two">Artikel<select name="article_id" id="repair-article" required></select></label>
+        <label class="span-two">Fehlerbeschreibung<textarea name="error_description" rows="3" maxlength="4000" required></textarea></label>
+        <label>Schadensart<input name="damage_type" maxlength="160"></label>
+        <label>Kosten<input name="costs" type="number" min="0" step="0.01" value="0"></label>
+        <label class="span-two">Reparaturmaßnahmen<textarea name="measures" rows="3" maxlength="4000"></textarea></label>
+        <label class="span-two">Ersatzteile<textarea name="spare_parts" rows="2" maxlength="2000"></textarea></label>
+        <label>Status<select name="repair_status"><option>Offen</option><option>In Bearbeitung</option><option>Abgeschlossen</option></select></label>
+        <label class="span-two">Interne Notizen<textarea name="internal_notes" rows="2" maxlength="3000"></textarea></label>
+      </div>
+      <div class="modal-actions">
+        <button class="button button-quiet" type="button" data-close="repair-dialog">Abbrechen</button>
+        <button class="button button-primary" type="submit">Reparatur speichern</button>
       </div>
     </form>
   </dialog>

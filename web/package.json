@@ -6,7 +6,8 @@
     "build": "esbuild app.js --bundle --format=iife --target=es2020 --outfile=app.bundle.js"
   },
   "dependencies": {
-    "@zxing/browser": "0.1.5"
+    "@zxing/browser": "0.1.5",
+    "bwip-js": "4.11.4"
   },
   "devDependencies": {
     "esbuild": "0.25.0"
