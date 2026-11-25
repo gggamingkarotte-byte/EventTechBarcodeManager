@@ -6,8 +6,8 @@ import html
 import json
 import subprocess
 
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QPixmap, QBrush, QColor, QFont, QPen, QPainter
+from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer, QUrl
+from PySide6.QtGui import QAction, QKeySequence, QPixmap, QBrush, QColor, QFont, QPen, QPainter, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
     QStackedWidget, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
@@ -34,7 +34,7 @@ from modules.ipad_scanner import IpadScannerServer, local_ipv4_addresses
 from modules.cloud_sync import (
     SupabaseSyncClient, apply_cloud_snapshot, local_snapshot, plan_sync,
 )
-from modules.secret_store import protect_secret, unprotect_secret
+from modules.secret_store import protect_secret, secret_store_name, unprotect_secret
 from modules.usage_guides import (
     has_auto_usage_guide, manufacturer_manual_search_url, update_auto_usage_guide,
 )
@@ -1352,10 +1352,10 @@ class MainWindow(QMainWindow):
         if not docs:
             QMessageBox.information(self, "Anleitung", "Für diesen Artikel ist keine Anleitung hinterlegt.")
             return
-        import os
         path = docs[0]["path"]
         if path:
-            os.startfile(path)
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+                QMessageBox.warning(self, "Dokument", f"Datei konnte nicht geöffnet werden:\n{path}")
         elif docs[0]["external_url"]:
             import webbrowser
             webbrowser.open(docs[0]["external_url"])
@@ -2651,7 +2651,7 @@ class MainWindow(QMainWindow):
         scanner_layout.addLayout(form)
         scanner_info = QLabel(
             "USB- und Bluetooth-HID-Scanner senden Barcodes wie eine Tastatur. "
-            "Windows zeigt diese Eingaben nicht zuverlässig dem einzelnen Gerät zu; "
+            "Das Betriebssystem zeigt diese Eingaben nicht immer zuverlässig dem einzelnen Gerät zu; "
             "die Auswahl merkt das bevorzugte Gerät, die Erfassung erfolgt im fokussierten Scan-Feld."
         )
         scanner_info.setWordWrap(True)
@@ -2672,8 +2672,8 @@ class MainWindow(QMainWindow):
         ipad_layout = QVBoxLayout(ipad_tab)
         ipad_info = QLabel(
             "Koppeln Sie ein iPad oder Android-Gerät im selben WLAN. Die mobile Seite kann Barcodes mit der "
-            "Live-Kamera oder als Foto aufnehmen und lokal auf diesem PC auswerten. Für Live-Video muss das "
-            "PC-Zertifikat einmalig auf dem Mobilgerät installiert werden. Alternativ können Sie einen "
+            "Live-Kamera oder als Foto aufnehmen und lokal auf diesem Gerät auswerten. Für Live-Video muss das "
+            "Geräte-Zertifikat einmalig auf dem Mobilgerät installiert werden. Alternativ können Sie einen "
             "Bluetooth-HID-Scanner mit dem Mobilgerät verbinden."
         )
         ipad_info.setWordWrap(True)
@@ -2760,7 +2760,7 @@ class MainWindow(QMainWindow):
         cloud_layout.addWidget(self.cloud_sync_status)
         cloud_note = QLabel(
             "Kein Benutzer-Login: alle PCs verwenden denselben Schlüssel. Der Schlüssel wird auf diesem PC "
-            "mit Windows DPAPI verschlüsselt. Änderungen werden bei aktiver Cloud-Verbindung automatisch "
+            f"mit {secret_store_name()} geschützt. Änderungen werden bei aktiver Cloud-Verbindung automatisch "
             "synchronisiert; ohne Internet bleiben sie lokal und werden später abgeglichen. Bei gleichzeitigen "
             "Änderungen fragt die App, welche Version gelten soll. Fotos und lokale Dokumentdateien werden "
             "nicht in die Cloud kopiert."
@@ -2791,7 +2791,12 @@ class MainWindow(QMainWindow):
 
     def detect_scanner_devices(self):
         if sys.platform != "win32":
-            QMessageBox.information(self, "Scanner-Geräte", "Die Geräteliste ist nur unter Windows verfügbar.")
+            QMessageBox.information(
+                self, "Scanner-Geräte",
+                "Die automatische Geräteliste ist nur unter Windows verfügbar. "
+                "Unter Linux funktionieren USB- und Bluetooth-HID-Scanner als Tastatureingabe "
+                "im fokussierten Scan-Feld.",
+            )
             return
         command = (
             "$devices = @(Get-PnpDevice -PresentOnly | "

@@ -1,6 +1,7 @@
 # EventTech Barcode Manager
 
-Lokale Windows-Inventar- und Lagerverwaltungssoftware für Veranstaltungstechnik.
+Lokale Inventar- und Lagerverwaltungssoftware für Veranstaltungstechnik auf Windows und Raspberry Pi OS
+64-Bit.
 
 ## Installation
 
@@ -171,3 +172,22 @@ zuerst die lokale virtuelle Umgebung, danach Python aus dem PATH oder den Python
 Der Installer erlaubt die Installation nur für den aktuellen Benutzer ohne Administratorrechte oder für alle
 Benutzer mit Administratorfreigabe. Datenbank, Dokumente und Backups werden getrennt unter
 `%LOCALAPPDATA%\EventTechBarcodeManager` gespeichert und bei der Deinstallation nicht entfernt.
+
+## Raspberry Pi OS (64-Bit)
+
+Der Linux-Installer ist für Raspberry Pi OS 64-Bit (ARM64/aarch64) vorgesehen. Raspberry Pi OS 32-Bit wird
+nicht unterstützt, da die benötigten PySide6- und Barcode-Decoder-Pakete dafür keine passenden fertigen
+ARM-Wheels bereitstellen.
+
+Nach dem Push der Linux-Paketierung auf `main`:
+
+1. Öffne **Actions → Build Raspberry Pi OS installer** und starte **Run workflow**.
+2. Öffne den erfolgreichen Lauf und lade unter **Artifacts** `eventtech-raspberry-pi-os-64-bit` herunter.
+3. Entpacke die ZIP-Datei und installiere die `.deb`-Datei per Doppelklick oder im Terminal:
+   `sudo apt install ./eventtech-barcode-manager_*_arm64.deb`
+4. Starte **EventTech Barcode Manager** über das Anwendungsmenü.
+
+Der Installer richtet GNOME Keyring als geschützten Speicher für Cloud- und Scanner-Schlüssel ein. Die
+Cloud-Schlüssel von Windows werden nicht automatisch übertragen; gib den Organisationsschlüssel auf dem
+Raspberry Pi erneut ein. USB- und Bluetooth-HID-Scanner funktionieren als Tastatureingabe; die Auswahl
+einzelner Scanner-Geräte bleibt Windows vorbehalten.

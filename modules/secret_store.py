@@ -1,7 +1,20 @@
 import base64
 import ctypes
 import sys
+import uuid
 from ctypes import wintypes
+
+
+_KEYRING_SERVICE = "EventTech Barcode Manager"
+_KEYRING_PREFIX = "keyring:v1:"
+
+
+def secret_store_name() -> str:
+    if sys.platform == "win32":
+        return "Windows DPAPI"
+    if sys.platform.startswith("linux"):
+        return "GNOME Keyring"
+    return "nicht unterstütztem Schlüsselbund"
 
 
 class _DataBlob(ctypes.Structure):
@@ -54,11 +67,54 @@ def _windows_dpapi(data: bytes, decrypt: bool) -> bytes:
         kernel32.LocalFree(output_blob.pbData)
 
 
+def _linux_keyring():
+    import keyring
+    from keyring.backends.SecretService import Keyring
+
+    keyring.set_keyring(Keyring())
+    return keyring
+
+
 def protect_secret(value: str) -> str:
-    encrypted = _windows_dpapi(value.encode("utf-8"), decrypt=False)
-    return base64.b64encode(encrypted).decode("ascii")
+    if sys.platform == "win32":
+        encrypted = _windows_dpapi(value.encode("utf-8"), decrypt=False)
+        return base64.b64encode(encrypted).decode("ascii")
+    if sys.platform.startswith("linux"):
+        reference = uuid.uuid4().hex
+        try:
+            keyring = _linux_keyring()
+            keyring.set_password(_KEYRING_SERVICE, reference, value)
+        except Exception as exc:
+            raise RuntimeError(
+                "Der Linux-Schlüsselbund ist nicht verfügbar. Starten Sie die App in einer "
+                "Desktop-Sitzung mit entsperrtem GNOME Keyring."
+            ) from exc
+        return f"{_KEYRING_PREFIX}{reference}"
+    raise RuntimeError(f"Geschützte Schlüssel werden auf {sys.platform} nicht unterstützt.")
 
 
 def unprotect_secret(value: str) -> str:
-    encrypted = base64.b64decode(value.encode("ascii"), validate=True)
-    return _windows_dpapi(encrypted, decrypt=True).decode("utf-8")
+    if value.startswith(_KEYRING_PREFIX):
+        if not sys.platform.startswith("linux"):
+            raise RuntimeError("Dieser Schlüssel wurde in einem Linux-Schlüsselbund gespeichert.")
+        reference = value[len(_KEYRING_PREFIX):]
+        try:
+            keyring = _linux_keyring()
+            secret = keyring.get_password(_KEYRING_SERVICE, reference)
+        except Exception as exc:
+            raise RuntimeError(
+                "Der Linux-Schlüsselbund ist nicht verfügbar oder nicht entsperrt."
+            ) from exc
+        if secret is None:
+            raise RuntimeError(
+                "Der Schlüssel wurde im Linux-Schlüsselbund nicht gefunden. "
+                "Bitte geben Sie den Organisationsschlüssel erneut ein."
+            )
+        return secret
+    if sys.platform == "win32":
+        encrypted = base64.b64decode(value.encode("ascii"), validate=True)
+        return _windows_dpapi(encrypted, decrypt=True).decode("utf-8")
+    raise RuntimeError(
+        "Dieser Schlüssel wurde unter Windows mit DPAPI geschützt und kann hier nicht "
+        "entschlüsselt werden. Bitte geben Sie ihn erneut ein."
+    )

@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import os
+import sys
 import base64
 import json
 import sqlite3
@@ -516,10 +517,37 @@ class CoreTests(unittest.TestCase):
         self.assertIn("articles", deleted_types)
         self.assertIn("barcodes", deleted_types)
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows DPAPI test")
     def test_cloud_shared_key_is_protected_with_windows_dpapi(self):
         secret = "sample shared organization key"
         self.assertEqual(unprotect_secret(protect_secret(secret)), secret)
 
+    def test_cloud_shared_key_uses_linux_keyring(self):
+        secret = "sample shared organization key"
+        stored_secrets = {}
+        keyring = MagicMock()
+        keyring.set_password.side_effect = (
+            lambda service, reference, value: stored_secrets.__setitem__(reference, value)
+        )
+        keyring.get_password.side_effect = (
+            lambda service, reference: stored_secrets.get(reference)
+        )
+        with patch("modules.secret_store.sys.platform", "linux"), patch(
+            "modules.secret_store._linux_keyring", return_value=keyring
+        ):
+            protected = protect_secret(secret)
+            self.assertTrue(protected.startswith("keyring:v1:"))
+            self.assertNotIn(secret, protected)
+            self.assertEqual(unprotect_secret(protected), secret)
+
+    @patch(
+        "modules.ipad_scanner.protect_secret",
+        new=lambda value: base64.b64encode(value.encode("ascii")).decode("ascii"),
+    )
+    @patch(
+        "modules.ipad_scanner.unprotect_secret",
+        new=lambda value: base64.b64decode(value.encode("ascii")).decode("ascii"),
+    )
     def test_ipad_scanner_requires_pairing_token_and_receives_barcode(self):
         received = []
         certificate_dir = Path(self.tempdir.name) / "scanner-certificate"
@@ -545,7 +573,10 @@ class CoreTests(unittest.TestCase):
                 self.assertIn(b"BEGIN CERTIFICATE", certificate)
             protected_ca_key = (certificate_dir / "ca-key.pem").read_text(encoding="ascii")
             self.assertNotIn("PRIVATE KEY", protected_ca_key)
-            self.assertIn("PRIVATE KEY", unprotect_secret(protected_ca_key))
+            self.assertIn(
+                "PRIVATE KEY",
+                base64.b64decode(protected_ca_key.encode("ascii")).decode("ascii"),
+            )
             secure_context = ssl.create_default_context(cadata=certificate.decode("ascii"))
             secure_url = f"https://127.0.0.1:{server.https_port}/?key={server.token}"
             with urllib.request.urlopen(secure_url, context=secure_context, timeout=3) as response:

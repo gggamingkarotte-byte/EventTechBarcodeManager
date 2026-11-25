@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=EventTech Barcode Manager
+Comment=Inventar- und Lagerverwaltung für Veranstaltungstechnik
+Exec=/opt/eventtech-barcode-manager/EventTechBarcodeManager
+Icon=eventtech-barcode-manager
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true

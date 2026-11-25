@@ -42,7 +42,7 @@ video{display:block;width:100%;max-height:58vh;min-height:220px;background:#090b
 </head>
 <body><main>
 <div class="icon">▦</div><h1>EventTech Scanner</h1>
-<p>Live-Kamera auf iPad/iPhone und Android. Erkannte Barcodes werden direkt an den gekoppelten Windows-PC gesendet.</p>
+<p>Live-Kamera auf iPad/iPhone und Android. Erkannte Barcodes werden direkt an den gekoppelten Lager-Manager gesendet.</p>
 <section class="card">
 <h2>Live-Kamera</h2>
 <video id="preview" autoplay muted playsinline aria-label="Live-Kamerabild"></video>
@@ -66,7 +66,7 @@ video{display:block;width:100%;max-height:58vh;min-height:220px;background:#090b
 <button type="submit">Barcode senden</button></form>
 </section>
 <div id="status" role="status" aria-live="polite"></div>
-<p class="hint">Nur im lokalen WLAN verwenden. Die Kopplung gilt, solange der Windows-Manager geöffnet ist.</p>
+<p class="hint">Nur im lokalen WLAN verwenden. Die Kopplung gilt, solange der Lager-Manager geöffnet ist.</p>
 </main>
 <script>
 const token=new URLSearchParams(location.search).get("key");
