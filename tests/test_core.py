@@ -604,6 +604,14 @@ class CoreTests(unittest.TestCase):
         finally:
             server.stop()
 
+    @patch(
+        "modules.ipad_scanner.protect_secret",
+        new=lambda value: base64.b64encode(value.encode("ascii")).decode("ascii"),
+    )
+    @patch(
+        "modules.ipad_scanner.unprotect_secret",
+        new=lambda value: base64.b64decode(value.encode("ascii")).decode("ascii"),
+    )
     def test_ipad_scanner_decodes_camera_image_locally(self):
         received = []
         server = IpadScannerServer(
