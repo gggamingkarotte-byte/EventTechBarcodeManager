@@ -16,6 +16,14 @@ on:
       - "installer/linux/**"
       - "tests/**"
       - ".github/workflows/build-linux-deb.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "requirements-linux.txt"
+      - ".github/workflows/build-linux-deb.yml"
+      - "installer/linux/**"
+      - "tests/**"
   workflow_dispatch:
 
 permissions:
