@@ -185,21 +185,26 @@ Der Installer erlaubt die Installation nur für den aktuellen Benutzer ohne Admi
 Benutzer mit Administratorfreigabe. Datenbank, Dokumente und Backups werden getrennt unter
 `%LOCALAPPDATA%\EventTechBarcodeManager` gespeichert und bei der Deinstallation nicht entfernt.
 
-## Raspberry Pi OS (64-Bit)
+## Linux-Installer (.deb)
 
-Der Linux-Installer ist für Raspberry Pi OS 64-Bit (ARM64/aarch64) vorgesehen. Raspberry Pi OS 32-Bit wird
-nicht unterstützt, da die benötigten PySide6- und Barcode-Decoder-Pakete dafür keine passenden fertigen
-ARM-Wheels bereitstellen.
+`.deb`-Pakete werden für Debian- und Ubuntu-basierte Distributionen sowie Raspberry Pi OS gebaut:
 
-Nach dem Push der Linux-Paketierung auf `main`:
+- **amd64** für 64-Bit-x86-PCs (`x86_64`)
+- **arm64** für 64-Bit-ARM-Geräte (`aarch64`), einschließlich Raspberry Pi OS 64-Bit
 
-1. Öffne **Actions → Build Raspberry Pi OS installer** und starte **Run workflow**.
-2. Öffne den erfolgreichen Lauf und lade unter **Artifacts** `eventtech-raspberry-pi-os-64-bit` herunter.
-3. Entpacke die ZIP-Datei und installiere die `.deb`-Datei per Doppelklick oder im Terminal:
+Andere Paketformate und 32-Bit-Linux werden nicht unterstützt. Fedora, Arch Linux und andere nicht-Debian-
+basierte Distributionen können `.deb`-Dateien nicht nativ installieren.
+
+Nach dem Push der Paketierung auf `main`:
+
+1. Öffne **Actions → Build Linux .deb packages** und starte **Run workflow**.
+2. Lade für dein Gerät das passende Artefakt herunter: `eventtech-linux-amd64` oder `eventtech-linux-arm64`.
+3. Entpacke die ZIP-Datei und installiere die enthaltene `.deb`-Datei:
+   `sudo apt install ./eventtech-barcode-manager_*_amd64.deb` oder
    `sudo apt install ./eventtech-barcode-manager_*_arm64.deb`
 4. Starte **EventTech Barcode Manager** über das Anwendungsmenü.
 
 Der Installer richtet GNOME Keyring als geschützten Speicher für Cloud- und Scanner-Schlüssel ein. Die
-Cloud-Schlüssel von Windows werden nicht automatisch übertragen; gib den Organisationsschlüssel auf dem
-Raspberry Pi erneut ein. USB- und Bluetooth-HID-Scanner funktionieren als Tastatureingabe; die Auswahl
-einzelner Scanner-Geräte bleibt Windows vorbehalten.
+Cloud-Schlüssel von Windows werden nicht automatisch übertragen; gib den Organisationsschlüssel unter Linux
+erneut ein. USB- und Bluetooth-HID-Scanner funktionieren als Tastatureingabe; die Auswahl einzelner Scanner-
+Geräte bleibt Windows vorbehalten.

@@ -5,8 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 ARCH="$(dpkg --print-architecture)"
-if [[ "$ARCH" != "arm64" ]]; then
-  echo "This installer must be built on a 64-bit ARM Linux runner (got: $ARCH)." >&2
+if [[ "$ARCH" != "amd64" && "$ARCH" != "arm64" ]]; then
+  echo "Supported Debian architectures are amd64 and arm64 (got: $ARCH)." >&2
+  exit 1
+fi
+if [[ -n "${EXPECTED_DEB_ARCH:-}" && "$ARCH" != "$EXPECTED_DEB_ARCH" ]]; then
+  echo "Expected architecture $EXPECTED_DEB_ARCH but the runner reports $ARCH." >&2
   exit 1
 fi
 
@@ -51,5 +55,10 @@ Description: Inventory and warehouse management for event technology
  repairs, inventories, and scanner workflows.
 EOF
 
-dpkg-deb --build --root-owner-group "$PACKAGE_ROOT" \
-  "$OUTPUT_DIR/eventtech-barcode-manager_${VERSION}_${ARCH}.deb"
+PACKAGE_FILE="$OUTPUT_DIR/eventtech-barcode-manager_${VERSION}_${ARCH}.deb"
+dpkg-deb --build --root-owner-group "$PACKAGE_ROOT" "$PACKAGE_FILE"
+PACKAGE_ARCH="$(dpkg-deb --field "$PACKAGE_FILE" Architecture)"
+if [[ "$PACKAGE_ARCH" != "$ARCH" ]]; then
+  echo "Package architecture $PACKAGE_ARCH does not match runner architecture $ARCH." >&2
+  exit 1
+fi
