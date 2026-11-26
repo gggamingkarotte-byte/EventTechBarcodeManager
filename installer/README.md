@@ -23,6 +23,9 @@ Der GitHub-Actions-Workflow **Build Linux .deb packages** erstellt native `.deb`
 - `amd64` (64-Bit-x86, z. B. Debian/Ubuntu-PCs)
 - `arm64` (64-Bit-ARM, z. B. Raspberry Pi OS 64-Bit)
 
+Der AMD64-Build verwendet PySide6 6.8.3 und prüft die nativen Linux-Abhängigkeiten
+zusätzlich mit einer CPU-Emulation ohne SSE4.1/SSE4.2.
+
 Lade im erfolgreichen Workflow-Lauf das Artefakt `eventtech-linux-amd64` oder
 `eventtech-linux-arm64` herunter und installiere die enthaltene Datei mit
 `sudo apt install ./eventtech-barcode-manager_<Version>_<Architektur>.deb`.
