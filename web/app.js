@@ -2,6 +2,7 @@
 
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import bwipjs from "bwip-js";
+import { decryptSupabaseConfig, encryptSupabaseConfig } from "./supabase-config.js";
 import { hasAutoUsageGuide, updateAutoUsageGuide } from "./usage-guides.js";
 
 const CONFIG_STORAGE_KEY = "eventtech.web.config.v1";
@@ -35,6 +36,7 @@ let scannerPurpose = "search";
 let generatedBarcode = null;
 let barcodePdfItems = [];
 let dmxDraftModes = [];
+let supabaseConfigFileMode = "export";
 
 function cacheElements() {
   [
@@ -64,6 +66,9 @@ function cacheElements() {
     "scan-export-button", "camera-device-select", "scanner-prefix", "scanner-suffix",
     "camera-refresh-button", "backup-export-button", "backup-import-button",
     "backup-file-input", "settings-account", "settings-logout-button",
+    "supabase-config-dialog", "supabase-config-description", "supabase-config-password",
+    "supabase-config-confirm-wrap", "supabase-config-confirm", "supabase-config-action",
+    "supabase-config-file-input",
     "dmx-add-mode-button", "article-attachments", "article-files-input", "article-files-list",
     "article-files-note",
   ].forEach((id) => {
@@ -211,14 +216,75 @@ async function apiRequest(path, options = {}, retry = true) {
 }
 
 function saveConfig(url, anonKey) {
-  projectConfig = { url: normalizeProjectUrl(url), anonKey: anonKey.trim() };
-  if (projectConfig.anonKey.length < 20) {
+  const nextConfig = { url: normalizeProjectUrl(url), anonKey: anonKey.trim() };
+  if (nextConfig.anonKey.length < 20) {
     throw new Error("Der Publishable-/anon-Key sieht unvollständig aus.");
   }
-  writeStorage(CONFIG_STORAGE_KEY, projectConfig);
-  elements["project-url"].value = projectConfig.url;
-  elements["publishable-key"].value = projectConfig.anonKey;
+  writeStorage(CONFIG_STORAGE_KEY, nextConfig);
+  projectConfig = nextConfig;
+  elements["project-url"].value = nextConfig.url;
+  elements["publishable-key"].value = nextConfig.anonKey;
   elements["login-button"].disabled = false;
+}
+
+function openSupabaseConfigDialog(mode) {
+  supabaseConfigFileMode = mode;
+  elements["supabase-config-password"].value = "";
+  elements["supabase-config-confirm"].value = "";
+  elements["supabase-config-confirm-wrap"].hidden = mode !== "export";
+  elements["supabase-config-description"].textContent = mode === "export"
+    ? "Die Datei wird mit AES-GCM und deinem Passwort verschlüsselt. Verwende mindestens 12 Zeichen und bewahre das Passwort getrennt auf."
+    : "Wähle deine verschlüsselte Verbindungsdatei aus und gib das zugehörige Passwort ein.";
+  elements["supabase-config-action"].textContent = mode === "export"
+    ? "Verschlüsselt exportieren"
+    : "Datei auswählen";
+  elements["supabase-config-dialog"].showModal();
+}
+
+async function exportSupabaseConfigFile() {
+  const password = elements["supabase-config-password"].value;
+  if (password.length < 12) throw new Error("Das Dateipasswort muss mindestens 12 Zeichen lang sein.");
+  if (password !== elements["supabase-config-confirm"].value) {
+    throw new Error("Die Dateipasswörter stimmen nicht überein.");
+  }
+  const settings = {
+    project_url: normalizeProjectUrl(elements["project-url"].value),
+    public_key: elements["publishable-key"].value.trim(),
+  };
+  if (settings.public_key.length < 20) {
+    throw new Error("Der Publishable-/anon-Key sieht unvollständig aus.");
+  }
+  const encrypted = await encryptSupabaseConfig(settings, password);
+  downloadBlob(
+    new Blob([JSON.stringify(encrypted, null, 2)], { type: "application/json" }),
+    "eventtech-supabase-settings.json",
+  );
+  showToast("Supabase-Verbindung wurde verschlüsselt exportiert.");
+}
+
+async function importSupabaseConfigFile(file) {
+  if (!file || file.size > 64 * 1024) {
+    throw new Error("Die Konfigurationsdatei fehlt oder ist zu groß.");
+  }
+  const password = elements["supabase-config-password"].value;
+  let settings = await decryptSupabaseConfig(await file.text(), password);
+  const nextUrl = normalizeProjectUrl(settings.project_url);
+  const nextKey = settings.public_key;
+  const containsSharedKey = Boolean(settings.shared_key);
+  settings.shared_key = "";
+  const changed = projectConfig && (projectConfig.url !== nextUrl || projectConfig.anonKey !== nextKey);
+  if (changed && session) {
+    clearSessionStorage();
+    showGate();
+  }
+  saveConfig(nextUrl, nextKey);
+  setConnectionStatus("Projekt bereit · anmelden");
+  showToast(
+    containsSharedKey
+      ? "Projektverbindung importiert. Der Desktop-Organisationsschlüssel wird im Browser nicht gespeichert."
+      : "Supabase-Projektverbindung wurde importiert.",
+  );
+  elements["supabase-config-dialog"].close();
 }
 
 function setAuthenticatedView(isAuthenticated) {
@@ -2024,6 +2090,36 @@ function bindEvents() {
     } catch (error) {
       showToast(`Projekt konnte nicht gespeichert werden: ${error.message}`, true);
     }
+  });
+  document.querySelectorAll("[data-config-file-action]").forEach((button) => {
+    button.addEventListener("click", () => openSupabaseConfigDialog(button.dataset.configFileAction));
+  });
+  elements["supabase-config-action"].addEventListener("click", async () => {
+    if (supabaseConfigFileMode === "import") {
+      elements["supabase-config-file-input"].click();
+      return;
+    }
+    try {
+      await exportSupabaseConfigFile();
+      elements["supabase-config-dialog"].close();
+    } catch (error) {
+      showToast(`Verbindung konnte nicht exportiert werden: ${error.message}`, true);
+    }
+  });
+  elements["supabase-config-file-input"].addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      await importSupabaseConfigFile(file);
+    } catch (error) {
+      showToast(`Verbindung konnte nicht importiert werden: ${error.message}`, true);
+    } finally {
+      event.target.value = "";
+    }
+  });
+  elements["supabase-config-dialog"].addEventListener("close", () => {
+    elements["supabase-config-password"].value = "";
+    elements["supabase-config-confirm"].value = "";
   });
   elements["login-form"].addEventListener("submit", logIn);
   elements["logout-button"].addEventListener("click", logOut);

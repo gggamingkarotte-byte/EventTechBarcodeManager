@@ -1,0 +1,10 @@
+{
+  "format": "eventtech-supabase-config",
+  "version": 1,
+  "cipher": "AES-256-GCM",
+  "kdf": "PBKDF2-SHA256",
+  "iterations": 310000,
+  "salt": "Sc1YxzFaMPIw3p6GMToLQQ==",
+  "nonce": "yEZE+bOp8miZsNfm",
+  "ciphertext": "IEYY6kWda/xiAJKMlmsAVYB0L61PRXMm74qWEuL3qG7WcPzbkEPI4dDS7kglQxGadpY6dQaaIu3XEEIioWh3hPw7KefXJZvjKg9bRhSGU+Lknb+UF8h+lXOTaMT1OhrFQ6fST5Ch6uOgoFdz15q6tETy1tYszm8FijCPKA6kWiRJiuXg80qO99D0/InxVn/3PgvylP4SeFG/3W3b3zEI6b9PH3ga"
+}

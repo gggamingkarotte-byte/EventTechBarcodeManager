@@ -82482,6 +82482,134 @@
     BWIPP_VERSION
   };
 
+  // supabase-config.js
+  var FORMAT = "eventtech-supabase-config";
+  var VERSION = 1;
+  var CIPHER = "AES-256-GCM";
+  var KDF = "PBKDF2-SHA256";
+  var ITERATIONS = 31e4;
+  var AAD = new TextEncoder().encode("eventtech-supabase-config:v1");
+  var MAX_FILE_SIZE = 64 * 1024;
+  var MIN_PASSWORD_LENGTH = 12;
+  function toBase64(bytes) {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  }
+  function fromBase64(value) {
+    if (typeof value !== "string") throw new Error("Die Konfigurationsdatei ist besch\xE4digt.");
+    const binary = atob(value);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  }
+  function validateSettings(settings) {
+    if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+      throw new Error("Die Konfigurationsdatei enth\xE4lt ung\xFCltige Daten.");
+    }
+    if (typeof settings.project_url !== "string" || typeof settings.public_key !== "string") {
+      throw new Error("Projekt-URL oder \xF6ffentlicher Schl\xFCssel fehlen.");
+    }
+    const url = new URL(settings.project_url);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/" && url.pathname !== "") {
+      throw new Error("Die Supabase-Projekt-URL muss eine g\xFCltige HTTPS-Adresse sein.");
+    }
+    const publicKey = settings.public_key.trim();
+    if (publicKey.length < 20) throw new Error("Der \xF6ffentliche Supabase-Schl\xFCssel ist ung\xFCltig.");
+    const validated = {
+      format: FORMAT,
+      version: VERSION,
+      project_url: url.origin,
+      public_key: publicKey
+    };
+    if (settings.shared_key !== void 0) {
+      if (typeof settings.shared_key !== "string" || settings.shared_key.length < 32) {
+        throw new Error("Der Organisationsschl\xFCssel muss mindestens 32 Zeichen lang sein.");
+      }
+      validated.shared_key = settings.shared_key;
+    }
+    return validated;
+  }
+  async function deriveKey(password, salt) {
+    if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
+      throw new Error("Das Dateipasswort muss mindestens 12 Zeichen lang sein.");
+    }
+    if (!globalThis.crypto?.subtle) {
+      throw new Error("Verschl\xFCsselte Konfigurationsdateien ben\xF6tigen eine sichere HTTPS-Verbindung.");
+    }
+    const material = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(password),
+      "PBKDF2",
+      false,
+      ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt, iterations: ITERATIONS, hash: "SHA-256" },
+      material,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"]
+    );
+  }
+  async function encryptSupabaseConfig(settings, password) {
+    const payload = new TextEncoder().encode(JSON.stringify(validateSettings(settings)));
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(password, salt);
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: nonce, additionalData: AAD, tagLength: 128 },
+      key,
+      payload
+    );
+    return {
+      format: FORMAT,
+      version: VERSION,
+      cipher: CIPHER,
+      kdf: KDF,
+      iterations: ITERATIONS,
+      salt: toBase64(salt),
+      nonce: toBase64(nonce),
+      ciphertext: toBase64(new Uint8Array(ciphertext))
+    };
+  }
+  async function decryptSupabaseConfig(fileText, password) {
+    if (typeof fileText !== "string" || new TextEncoder().encode(fileText).length > MAX_FILE_SIZE) {
+      throw new Error("Die Konfigurationsdatei fehlt oder ist zu gro\xDF.");
+    }
+    let envelope;
+    try {
+      envelope = JSON.parse(fileText);
+    } catch {
+      throw new Error("Die Datei ist keine g\xFCltige Supabase-Konfiguration.");
+    }
+    if (!envelope || envelope.format !== FORMAT || envelope.version !== VERSION || envelope.cipher !== CIPHER || envelope.kdf !== KDF || envelope.iterations !== ITERATIONS) {
+      throw new Error("Dateiformat oder Verschl\xFCsselungsverfahren wird nicht unterst\xFCtzt.");
+    }
+    try {
+      const salt = fromBase64(envelope.salt);
+      const nonce = fromBase64(envelope.nonce);
+      const ciphertext = fromBase64(envelope.ciphertext);
+      if (salt.length !== 16 || nonce.length !== 12 || ciphertext.length > MAX_FILE_SIZE) {
+        throw new Error("Die Konfigurationsdatei ist besch\xE4digt.");
+      }
+      const key = await deriveKey(password, salt);
+      const plaintext = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: nonce, additionalData: AAD, tagLength: 128 },
+        key,
+        ciphertext
+      );
+      return validateSettings(JSON.parse(new TextDecoder().decode(plaintext)));
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Das Dateipasswort")) throw error;
+      if (error instanceof Error && error.message.includes("sichere HTTPS")) throw error;
+      if (error instanceof Error && error.message.startsWith("Dateiformat")) throw error;
+      if (error instanceof Error && error.message.startsWith("Die Konfigurationsdatei")) throw error;
+      if (error?.name === "OperationError") {
+        throw new Error("Dateipasswort ist falsch oder die Datei wurde ver\xE4ndert.");
+      }
+      throw new Error(`Konfigurationsdatei konnte nicht entschl\xFCsselt werden: ${error.message}`);
+    }
+  }
+
   // usage-guides.js
   var GUIDE_START = "[Automatische Bedienhinweise]";
   var GUIDE_END = "[/Automatische Bedienhinweise]";
@@ -82604,6 +82732,7 @@ ${generated}` : generated;
   var generatedBarcode = null;
   var barcodePdfItems = [];
   var dmxDraftModes = [];
+  var supabaseConfigFileMode = "export";
   function cacheElements() {
     [
       "boot-screen",
@@ -82714,6 +82843,13 @@ ${generated}` : generated;
       "backup-file-input",
       "settings-account",
       "settings-logout-button",
+      "supabase-config-dialog",
+      "supabase-config-description",
+      "supabase-config-password",
+      "supabase-config-confirm-wrap",
+      "supabase-config-confirm",
+      "supabase-config-action",
+      "supabase-config-file-input",
       "dmx-add-mode-button",
       "article-attachments",
       "article-files-input",
@@ -82849,14 +82985,66 @@ ${generated}` : generated;
     return readResponse(response);
   }
   function saveConfig(url, anonKey) {
-    projectConfig = { url: normalizeProjectUrl(url), anonKey: anonKey.trim() };
-    if (projectConfig.anonKey.length < 20) {
+    const nextConfig = { url: normalizeProjectUrl(url), anonKey: anonKey.trim() };
+    if (nextConfig.anonKey.length < 20) {
       throw new Error("Der Publishable-/anon-Key sieht unvollst\xE4ndig aus.");
     }
-    writeStorage(CONFIG_STORAGE_KEY, projectConfig);
-    elements["project-url"].value = projectConfig.url;
-    elements["publishable-key"].value = projectConfig.anonKey;
+    writeStorage(CONFIG_STORAGE_KEY, nextConfig);
+    projectConfig = nextConfig;
+    elements["project-url"].value = nextConfig.url;
+    elements["publishable-key"].value = nextConfig.anonKey;
     elements["login-button"].disabled = false;
+  }
+  function openSupabaseConfigDialog(mode) {
+    supabaseConfigFileMode = mode;
+    elements["supabase-config-password"].value = "";
+    elements["supabase-config-confirm"].value = "";
+    elements["supabase-config-confirm-wrap"].hidden = mode !== "export";
+    elements["supabase-config-description"].textContent = mode === "export" ? "Die Datei wird mit AES-GCM und deinem Passwort verschl\xFCsselt. Verwende mindestens 12 Zeichen und bewahre das Passwort getrennt auf." : "W\xE4hle deine verschl\xFCsselte Verbindungsdatei aus und gib das zugeh\xF6rige Passwort ein.";
+    elements["supabase-config-action"].textContent = mode === "export" ? "Verschl\xFCsselt exportieren" : "Datei ausw\xE4hlen";
+    elements["supabase-config-dialog"].showModal();
+  }
+  async function exportSupabaseConfigFile() {
+    const password = elements["supabase-config-password"].value;
+    if (password.length < 12) throw new Error("Das Dateipasswort muss mindestens 12 Zeichen lang sein.");
+    if (password !== elements["supabase-config-confirm"].value) {
+      throw new Error("Die Dateipassw\xF6rter stimmen nicht \xFCberein.");
+    }
+    const settings = {
+      project_url: normalizeProjectUrl(elements["project-url"].value),
+      public_key: elements["publishable-key"].value.trim()
+    };
+    if (settings.public_key.length < 20) {
+      throw new Error("Der Publishable-/anon-Key sieht unvollst\xE4ndig aus.");
+    }
+    const encrypted = await encryptSupabaseConfig(settings, password);
+    downloadBlob(
+      new Blob([JSON.stringify(encrypted, null, 2)], { type: "application/json" }),
+      "eventtech-supabase-settings.json"
+    );
+    showToast("Supabase-Verbindung wurde verschl\xFCsselt exportiert.");
+  }
+  async function importSupabaseConfigFile(file) {
+    if (!file || file.size > 64 * 1024) {
+      throw new Error("Die Konfigurationsdatei fehlt oder ist zu gro\xDF.");
+    }
+    const password = elements["supabase-config-password"].value;
+    let settings = await decryptSupabaseConfig(await file.text(), password);
+    const nextUrl = normalizeProjectUrl(settings.project_url);
+    const nextKey = settings.public_key;
+    const containsSharedKey = Boolean(settings.shared_key);
+    settings.shared_key = "";
+    const changed = projectConfig && (projectConfig.url !== nextUrl || projectConfig.anonKey !== nextKey);
+    if (changed && session) {
+      clearSessionStorage();
+      showGate();
+    }
+    saveConfig(nextUrl, nextKey);
+    setConnectionStatus("Projekt bereit \xB7 anmelden");
+    showToast(
+      containsSharedKey ? "Projektverbindung importiert. Der Desktop-Organisationsschl\xFCssel wird im Browser nicht gespeichert." : "Supabase-Projektverbindung wurde importiert."
+    );
+    elements["supabase-config-dialog"].close();
   }
   function setAuthenticatedView(isAuthenticated) {
     elements["gate"].hidden = isAuthenticated;
@@ -84513,6 +84701,36 @@ ${generated}` : generated;
       } catch (error) {
         showToast(`Projekt konnte nicht gespeichert werden: ${error.message}`, true);
       }
+    });
+    document.querySelectorAll("[data-config-file-action]").forEach((button) => {
+      button.addEventListener("click", () => openSupabaseConfigDialog(button.dataset.configFileAction));
+    });
+    elements["supabase-config-action"].addEventListener("click", async () => {
+      if (supabaseConfigFileMode === "import") {
+        elements["supabase-config-file-input"].click();
+        return;
+      }
+      try {
+        await exportSupabaseConfigFile();
+        elements["supabase-config-dialog"].close();
+      } catch (error) {
+        showToast(`Verbindung konnte nicht exportiert werden: ${error.message}`, true);
+      }
+    });
+    elements["supabase-config-file-input"].addEventListener("change", async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        await importSupabaseConfigFile(file);
+      } catch (error) {
+        showToast(`Verbindung konnte nicht importiert werden: ${error.message}`, true);
+      } finally {
+        event.target.value = "";
+      }
+    });
+    elements["supabase-config-dialog"].addEventListener("close", () => {
+      elements["supabase-config-password"].value = "";
+      elements["supabase-config-confirm"].value = "";
     });
     elements["login-form"].addEventListener("submit", logIn);
     elements["logout-button"].addEventListener("click", logOut);

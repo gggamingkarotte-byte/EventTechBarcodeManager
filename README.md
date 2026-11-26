@@ -84,6 +84,13 @@ verwendet ihn nur serverseitig. Alle PCs mit dem gemeinsamen Schlüssel erhalten
 Bei Verlust des Schlüssels muss `EVENTTECH_SHARED_KEY` im Supabase-Dashboard ersetzt und auf allen PCs
 aktualisiert werden.
 
+Unter **Einstellungen → Cloud-Synchronisierung** können die Supabase-Verbindungseinstellungen als
+passwortgeschützte JSON-Datei exportiert und auf einem anderen Gerät importiert werden. Die Datei enthält
+URL, öffentlichen Schlüssel und – falls vorhanden – den Organisationsschlüssel, verschlüsselt mit AES-GCM.
+Verwende ein starkes Dateipasswort mit mindestens 12 Zeichen und bewahre es getrennt von der Datei auf.
+Nach dem Import speichert die Desktop-App den Organisationsschlüssel wieder im geschützten Windows- bzw.
+Linux-Schlüsselspeicher.
+
 ## GitHub-Pages-Web-App
 
 Die browserbasierte App im Ordner `web` unterstützt Anmeldung, Artikelsuche und -bearbeitung,
@@ -120,6 +127,11 @@ Benutzerkonten anlegen.
    Projekt-URL und den öffentlichen Publishable-/anon-Key ein und melde dich mit einem angelegten Benutzer an.
    Projektkonfiguration und Sitzung werden nur im lokalen Browser gespeichert; auf gemeinsam genutzten
    Geräten nach der Nutzung abmelden.
+
+Die Supabase-Verbindung lässt sich über **Datei exportieren/importieren** als passwortgeschützte JSON-Datei
+zwischen Browsern und der Desktop-App übertragen. Die Website-Datei enthält nur Projekt-URL und öffentlichen
+Schlüssel; der Browser speichert den Organisationsschlüssel nicht. Beim Import einer Desktop-Datei wird dieser
+Schlüssel daher nicht in der Website abgelegt. Das Dateipasswort muss mindestens 12 Zeichen lang sein.
 
 Für die Desktop-App-Cloud-Synchronisierung richte zusätzlich die oben beschriebene Edge Function ein.
 Für lokale Web-Entwicklung installiere Node.js, führe `npm ci` und `npm run build` im Ordner `web` aus und

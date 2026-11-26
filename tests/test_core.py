@@ -24,6 +24,7 @@ import zxingcpp
 from PIL import Image
 from modules.cloud_sync import apply_cloud_snapshot, canonical_json, local_snapshot, plan_sync
 from modules.secret_store import protect_secret, unprotect_secret
+from modules.supabase_config_file import decrypt_supabase_config, encrypt_supabase_config
 from modules.usage_guides import (
     GUIDE_END, GUIDE_START, has_auto_usage_guide, update_auto_usage_guide,
 )
@@ -539,6 +540,31 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(protected.startswith("keyring:v1:"))
             self.assertNotIn(secret, protected)
             self.assertEqual(unprotect_secret(protected), secret)
+
+    def test_supabase_config_file_encrypts_and_restores_connection_and_shared_key(self):
+        settings = {
+            "project_url": "https://eventtech.supabase.co",
+            "public_key": "sb_publishable_public_test_key_123456",
+            "shared_key": "shared-organization-key-that-is-at-least-32-chars",
+        }
+        encrypted = encrypt_supabase_config(settings, "correct horse battery")
+
+        self.assertNotIn(settings["shared_key"].encode(), encrypted)
+        restored = decrypt_supabase_config(encrypted, "correct horse battery")
+        self.assertEqual(restored["project_url"], settings["project_url"])
+        self.assertEqual(restored["public_key"], settings["public_key"])
+        self.assertEqual(restored["shared_key"], settings["shared_key"])
+
+    def test_supabase_config_file_rejects_wrong_password_and_invalid_settings(self):
+        settings = {
+            "project_url": "https://eventtech.supabase.co",
+            "public_key": "sb_publishable_public_test_key_123456",
+        }
+        encrypted = encrypt_supabase_config(settings, "correct horse battery")
+        with self.assertRaisesRegex(ValueError, "Dateipasswort ist falsch"):
+            decrypt_supabase_config(encrypted, "wrong password here")
+        with self.assertRaisesRegex(ValueError, "mindestens 12 Zeichen"):
+            encrypt_supabase_config(settings, "short")
 
     @patch(
         "modules.ipad_scanner.protect_secret",

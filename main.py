@@ -35,6 +35,10 @@ from modules.cloud_sync import (
     SupabaseSyncClient, apply_cloud_snapshot, local_snapshot, plan_sync,
 )
 from modules.secret_store import protect_secret, secret_store_name, unprotect_secret
+from modules.supabase_config_file import (
+    decrypt_supabase_config,
+    encrypt_supabase_config,
+)
 from modules.usage_guides import (
     has_auto_usage_guide, manufacturer_manual_search_url, update_auto_usage_guide,
 )
@@ -2749,6 +2753,15 @@ class MainWindow(QMainWindow):
         key_buttons.addWidget(copy_key)
         cloud_layout.addLayout(key_buttons)
 
+        config_file_buttons = QHBoxLayout()
+        export_config = QPushButton("Verbindung verschlüsselt exportieren")
+        export_config.clicked.connect(self.export_cloud_settings_file)
+        import_config = QPushButton("Verbindung aus Datei importieren")
+        import_config.clicked.connect(self.import_cloud_settings_file)
+        config_file_buttons.addWidget(export_config)
+        config_file_buttons.addWidget(import_config)
+        cloud_layout.addLayout(config_file_buttons)
+
         save_cloud = QPushButton("Cloud-Einstellungen speichern")
         save_cloud.clicked.connect(lambda: self.save_cloud_settings())
         self.sync_now_button = QPushButton("Jetzt synchronisieren")
@@ -2763,7 +2776,8 @@ class MainWindow(QMainWindow):
             f"mit {secret_store_name()} geschützt. Änderungen werden bei aktiver Cloud-Verbindung automatisch "
             "synchronisiert; ohne Internet bleiben sie lokal und werden später abgeglichen. Bei gleichzeitigen "
             "Änderungen fragt die App, welche Version gelten soll. Fotos und lokale Dokumentdateien werden "
-            "nicht in die Cloud kopiert."
+            "nicht in die Cloud kopiert. Exportdateien enthalten den Organisationsschlüssel nur "
+            "passwortverschlüsselt; verwende ein starkes Dateipasswort."
         )
         cloud_note.setWordWrap(True)
         cloud_layout.addWidget(cloud_note)
@@ -2894,6 +2908,107 @@ class MainWindow(QMainWindow):
         if show_confirmation:
             QMessageBox.information(self, "Cloud-Einrichtung", "Cloud-Einstellungen wurden gespeichert.")
         return True
+
+    def export_cloud_settings_file(self):
+        project_url = self.cloud_project_url.text().strip()
+        public_key = self.cloud_public_key.text().strip()
+        shared_key = self.cloud_shared_key.text()
+        settings = {"project_url": project_url, "public_key": public_key}
+        if shared_key:
+            settings["shared_key"] = shared_key
+
+        password, accepted = QInputDialog.getText(
+            self,
+            "Supabase-Einstellungen exportieren",
+            "Passwort für die verschlüsselte Datei (mindestens 12 Zeichen):",
+            QLineEdit.Password,
+        )
+        if not accepted:
+            return
+        confirmation, accepted = QInputDialog.getText(
+            self,
+            "Passwort bestätigen",
+            "Dateipasswort erneut eingeben:",
+            QLineEdit.Password,
+        )
+        if not accepted:
+            return
+        if password != confirmation:
+            QMessageBox.warning(self, "Supabase-Einstellungen", "Die Passwörter stimmen nicht überein.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Supabase-Einstellungen exportieren",
+            "eventtech-supabase-settings.json",
+            "Verschlüsselte JSON-Datei (*.json)",
+        )
+        if not path:
+            return
+        if Path(path).suffix.lower() != ".json":
+            path = f"{path}.json"
+        try:
+            Path(path).write_bytes(encrypt_supabase_config(settings, password))
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Supabase-Einstellungen", f"Datei konnte nicht gespeichert werden:\n{exc}"
+            )
+            return
+        QMessageBox.information(
+            self,
+            "Supabase-Einstellungen",
+            "Die Verbindungseinstellungen wurden verschlüsselt exportiert. "
+            "Bewahre das Dateipasswort getrennt von der Datei auf.",
+        )
+
+    def import_cloud_settings_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Supabase-Einstellungen importieren",
+            "",
+            "Verschlüsselte JSON-Datei (*.json)",
+        )
+        if not path:
+            return
+        password, accepted = QInputDialog.getText(
+            self,
+            "Supabase-Einstellungen importieren",
+            "Dateipasswort eingeben:",
+            QLineEdit.Password,
+        )
+        if not accepted:
+            return
+        try:
+            config_path = Path(path)
+            if config_path.stat().st_size > 64 * 1024:
+                raise ValueError("Die Konfigurationsdatei fehlt oder ist zu groß.")
+            settings = decrypt_supabase_config(config_path.read_bytes(), password)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Supabase-Einstellungen", f"Datei konnte nicht importiert werden:\n{exc}"
+            )
+            return
+
+        self.cloud_project_url.setText(settings["project_url"])
+        self.cloud_public_key.setText(settings["public_key"])
+        if settings.get("shared_key"):
+            self.cloud_shared_key.setText(settings["shared_key"])
+
+        if len(self.cloud_shared_key.text()) >= 32:
+            if not self.save_cloud_settings(show_confirmation=False):
+                QMessageBox.warning(self, "Supabase-Einstellungen", self.cloud_sync_status.text())
+                return
+            message = (
+                "Die importierten Einstellungen wurden gespeichert. Der Organisationsschlüssel "
+                f"liegt geschützt im {secret_store_name()}."
+            )
+        else:
+            message = (
+                "Projekt-URL und öffentlicher Schlüssel wurden geladen. Trage den "
+                "Organisationsschlüssel ein und speichere anschließend die Cloud-Einstellungen."
+            )
+            self.cloud_sync_status.setText(message)
+        QMessageBox.information(self, "Supabase-Einstellungen", message)
 
     def _set_cloud_sync_busy(self, busy: bool):
         self.menu.setEnabled(not busy)
