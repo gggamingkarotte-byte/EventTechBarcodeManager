@@ -125,6 +125,7 @@
         <a href="#rack-graphic">Regal-Grafik</a>
         <a href="#stocktaking">Inventur</a>
         <a href="#repairs">Reparaturen</a>
+        <a href="#events">Events</a>
         <a href="#barcode-tools">Barcodes</a>
         <a href="#scan-history">Scan-Verlauf</a>
         <a href="#web-settings">Einstellungen</a>
@@ -242,6 +243,15 @@
           <button class="button button-primary" id="repair-add-button" type="button">＋ Reparatur eintragen</button>
         </div>
         <div class="table-wrap"><table><thead><tr><th>DATUM</th><th>ARTIKEL</th><th>FEHLER</th><th>SCHADENSART</th><th>MASSNAHMEN</th><th>KOSTEN</th><th>STATUS</th><th>ABSCHLUSS</th></tr></thead><tbody id="repair-rows"></tbody></table></div>
+      </section>
+
+      <section class="feature-section layout-width" id="events">
+        <div class="section-heading">
+          <div><p class="eyebrow eyebrow-dark">VERANSTALTUNGSPLANUNG</p><h2>Events<span class="heading-period">.</span></h2></div>
+          <button class="button button-primary" id="event-add-button" type="button">＋ Event anlegen</button>
+        </div>
+        <p class="table-footnote">Ordne einzelne Artikel zu, dokumentiere Ausgabe und Rückgabe und prüfe Reservierungskonflikte vor dem Speichern.</p>
+        <div class="table-wrap"><table><thead><tr><th>EVENT</th><th>ZEITRAUM</th><th>ORT</th><th>ARTIKELPOSITIONEN</th><th>STATUS</th><th>ANSPRECHPARTNER</th><th></th></tr></thead><tbody id="event-rows"></tbody></table></div>
       </section>
 
       <section class="feature-section layout-width" id="barcode-tools">
@@ -469,6 +479,32 @@
       <div class="modal-actions">
         <button class="button button-quiet" type="button" data-close="repair-dialog">Abbrechen</button>
         <button class="button button-primary" type="submit">Reparatur speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="event-dialog" aria-labelledby="event-dialog-title">
+    <form class="modal-form" id="event-form">
+      <div class="modal-heading">
+        <div><p class="eyebrow eyebrow-dark">VERANSTALTUNGSPLANUNG</p><h2 id="event-dialog-title">Event anlegen<span class="heading-period">.</span></h2></div>
+        <button class="icon-button" type="button" data-close="event-dialog" aria-label="Schließen">×</button>
+      </div>
+      <div class="form-grid">
+        <label class="span-two">Eventname *<input id="event-name" name="name" required maxlength="160"></label>
+        <label>Startdatum *<input id="event-start-date" name="start_date" type="date" required></label>
+        <label>Enddatum *<input id="event-end-date" name="end_date" type="date" required></label>
+        <label class="span-two">Veranstaltungsort<input id="event-location" name="location" maxlength="240"></label>
+        <label>Ansprechpartner<input id="event-contact" name="contact" maxlength="160"></label>
+        <label>Kunde / Veranstalter<input id="event-organizer" name="organizer" maxlength="160"></label>
+        <label>Status<select id="event-status" name="status"><option>Geplant</option><option>Vorbereitung</option><option>Bereit zur Ausgabe</option><option>Läuft</option><option>Rückgabe ausstehend</option><option>Abgeschlossen</option><option>Abgesagt</option></select></label>
+        <label class="span-two">Beschreibung<textarea id="event-description" name="description" rows="2" maxlength="3000"></textarea></label>
+        <label class="span-two">Notizen<textarea id="event-notes" name="notes" rows="2" maxlength="3000"></textarea></label>
+      </div>
+      <div class="subsection-heading event-items-heading"><h3>Einzelne Artikel und Rückgabe</h3><button class="button button-quiet" id="event-item-add-button" type="button">＋ Artikel hinzufügen</button></div>
+      <div class="table-wrap event-items-wrap"><table><thead><tr><th>ARTIKEL</th><th>BENÖTIGT</th><th>AUSGEGEBEN</th><th>ZURÜCK</th><th>FEHLEND</th><th>BESCHÄDIGT</th><th></th></tr></thead><tbody id="event-item-rows"></tbody></table></div>
+      <div class="modal-actions">
+        <button class="button button-quiet" type="button" data-close="event-dialog">Abbrechen</button>
+        <button class="button button-primary" id="event-save-button" type="submit">Event speichern</button>
       </div>
     </form>
   </dialog>

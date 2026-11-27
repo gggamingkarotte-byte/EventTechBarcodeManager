@@ -29,6 +29,14 @@ mit jeweils bis zu 512 Kanälen anlegen, umbenennen und entfernen. Pro Kanal kö
 Wertebereich und Beschreibung gepflegt werden. Die Änderungen werden erst mit dem Artikel gespeichert;
 vorhandene Modus- und Kanal-IDs bleiben beim Bearbeiten erhalten.
 
+## Eventplanung
+
+Unter **Events** lassen sich Veranstaltungen mit Zeitraum, Ort, Ansprechpartner, Veranstalter, Status und
+Notizen erfassen. Jedem Event können einzelne vorhandene Artikel mit benötigter, ausgegebener,
+zurückgegebener, fehlender und beschädigter Menge zugeordnet werden. Überlappende Reservierungen werden
+gegen den Artikelbestand geprüft und bei einem Konflikt nicht gespeichert. Events mit noch offenen
+Rückgaben können nicht gelöscht werden. Die lokale Datenbank legt die Eventtabellen automatisch an.
+
 ## Datenablage
 
 - Datenbank: `%LOCALAPPDATA%\EventTechBarcodeManager\eventtech.db`
@@ -69,12 +77,14 @@ Für die Ersteinrichtung wird ein Supabase-Projekt benötigt:
 
 1. Erstelle ein Projekt im Supabase-Dashboard und kopiere Projekt-URL sowie den öffentlichen Publishable-/anon-Key.
 2. Führe `supabase\migrations\202611230001_eventtech_sync.sql` einmal im Supabase **SQL Editor** aus.
-3. Installiere die Supabase CLI und führe im Projektordner `supabase login` sowie
+3. Führe danach `supabase\migrations\202611270001_eventtech_events.sql` aus, damit Events und
+   Artikelzuordnungen synchronisiert und Reservierungskonflikte auch serverseitig geprüft werden.
+4. Installiere die Supabase CLI und führe im Projektordner `supabase login` sowie
    `supabase link --project-ref <Projekt-ID>` aus.
-4. Erzeuge in **Einstellungen → Cloud-Synchronisierung** einen Organisationsschlüssel. Trage denselben Wert in
+5. Erzeuge in **Einstellungen → Cloud-Synchronisierung** einen Organisationsschlüssel. Trage denselben Wert in
    den Supabase Function Secrets als `EVENTTECH_SHARED_KEY` ein.
-5. Veröffentliche den Endpunkt mit `supabase functions deploy eventtech-sync --no-verify-jwt`.
-6. Trage Projekt-URL, öffentlichen Key und denselben Organisationsschlüssel unter
+6. Veröffentliche den Endpunkt mit `supabase functions deploy eventtech-sync --no-verify-jwt`.
+7. Trage Projekt-URL, öffentlichen Key und denselben Organisationsschlüssel unter
    **Einstellungen → Cloud-Synchronisierung** auf jedem PC ein. Auf dem ersten PC mit dem vorhandenen
    Inventar auf **Jetzt synchronisieren** klicken; weitere PCs laden diesen Bestand beim ersten Sync.
 
@@ -95,7 +105,8 @@ Linux-Schlüsselspeicher.
 
 Die browserbasierte App im Ordner `web` unterstützt Anmeldung, Artikelsuche und -bearbeitung,
 Lagerstruktur und Regal-Grafik, DMX-Modi und -Kanäle, Reparaturen, Inventuren, Scan-Verlauf,
-optionale automatische Bedienhinweise, Barcode-Erzeugung und Etikettendruck, CSV-Export sowie JSON-Backup.
+Eventplanung mit Einzelartikel-Zuordnung und Reservierungskonfliktprüfung, optionale automatische
+Bedienhinweise, Barcode-Erzeugung und Etikettendruck, CSV-Export sowie JSON-Backup.
 Die Kamera kann auf unterstützten
 Geräten als Scanner verwendet werden; USB-/Bluetooth-HID-Scanner funktionieren über das Eingabefeld.
 Fotos und Dokumente lassen sich für Web-Nutzer privat in Supabase speichern.
@@ -121,7 +132,9 @@ gehören niemals in die Webseite oder das öffentliche Repository.
    ein starkes, eigenes Passwort. Führe dann `supabase\migrations\202611260001_eventtech_web_approval.sql`
    aus. Die Migration sperrt alle noch nicht freigegebenen Konten sowohl für Bestandsdaten als auch für
    Datei-Anhänge.
-5. Weise deinem Konto im Supabase **SQL Editor** einmalig die Adminrolle zu. Ersetze den Platzhalter durch
+5. Führe `supabase\migrations\202611270001_eventtech_events.sql` aus, damit die Eventverwaltung in Web und
+   Desktop über dieselben Cloud-Datensätze synchronisiert wird.
+6. Weise deinem Konto im Supabase **SQL Editor** einmalig die Adminrolle zu. Ersetze den Platzhalter durch
    deine Admin-E-Mail-Adresse:
 
    ```sql
@@ -136,15 +149,15 @@ gehören niemals in die Webseite oder das öffentliche Repository.
    Es gibt absichtlich kein öffentlich fest eingebautes `admin/admin`-Passwort. Der Admin meldet sich mit
    der E-Mail und dem bei der Kontoerstellung gesetzten Passwort an. Das Passwort kann später unter
    **Einstellungen → Passwort ändern** geändert werden.
-6. Aktiviere in Supabase **Authentication → Providers → Email** die E-Mail-Anmeldung und Registrierung.
+7. Aktiviere in Supabase **Authentication → Providers → Email** die E-Mail-Anmeldung und Registrierung.
    Neue Konten erscheinen zunächst als ausstehend und erhalten erst nach Freigabe durch den Admin Zugriff.
    Lass die E-Mail-Bestätigung aktiviert, damit sich niemand mit einer fremden Adresse registrieren kann.
-7. Ergänze unter **Authentication → URL Configuration** die GitHub-Pages-Adresse als Site URL und erlaubte
+8. Ergänze unter **Authentication → URL Configuration** die GitHub-Pages-Adresse als Site URL und erlaubte
    Redirect URL: `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/`.
-8. Öffne im GitHub-Repository **Settings → Pages** und wähle **GitHub Actions** als Build-/Deployment-Quelle.
+9. Öffne im GitHub-Repository **Settings → Pages** und wähle **GitHub Actions** als Build-/Deployment-Quelle.
    Der Workflow `.github\workflows\deploy-web.yml` veröffentlicht den Ordner `web` automatisch nach Pushes
    auf `main`; ein manueller Start ist auch unter **Actions → Deploy inventory web app → Run workflow** möglich.
-9. Rufe `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/` auf und melde dich mit deinem
+10. Rufe `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/` auf und melde dich mit deinem
    Admin-Konto an. In **Einstellungen → Konten freigeben** kannst du neue Registrierungen genehmigen oder
    ablehnen. Die Anmeldung bleibt auf dem jeweiligen Browser gespeichert; auf gemeinsam genutzten Geräten
    nach der Nutzung abmelden.

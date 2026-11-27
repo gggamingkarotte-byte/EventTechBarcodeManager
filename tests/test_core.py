@@ -18,6 +18,11 @@ from modules.inventory import create_article, duplicate_article, update_article
 from modules.barcode import validate_ean13, generate_unique_code, render_barcode_png, create_label_pdf
 from modules.scanner import ScannerReader
 from modules.dmx import create_mode, set_channel
+from modules.events import (
+    ReservationConflictError,
+    delete_event,
+    save_event,
+)
 from modules.ipad_scanner import IpadScannerServer
 import qrcode
 import zxingcpp
@@ -517,6 +522,284 @@ class CoreTests(unittest.TestCase):
         deleted_types = {change["entity_type"] for change in result["pushes"] if change["deleted"]}
         self.assertIn("articles", deleted_types)
         self.assertIn("barcodes", deleted_types)
+
+    def test_event_reservations_warn_on_overlapping_quantity_and_allow_non_overlapping_dates(self):
+        article_id = create_article(
+            self.db, {"name": "Moving Head", "quantity": 2}
+        )
+        first_event = save_event(
+            self.db,
+            {
+                "name": "Messe A",
+                "start_date": "2026-12-01",
+                "end_date": "2026-12-03",
+            },
+            [{"article_id": article_id, "required_quantity": 2}],
+        )
+        overlapping = {
+            "name": "Messe B",
+            "start_date": "2026-12-03",
+            "end_date": "2026-12-04",
+        }
+        with self.assertRaises(ReservationConflictError) as error:
+            save_event(
+                self.db,
+                overlapping,
+                [{"article_id": article_id, "required_quantity": 1}],
+            )
+        self.assertEqual(error.exception.conflicts[0]["available"], 0)
+        second_event = save_event(
+            self.db,
+            {
+                **overlapping,
+                "start_date": "2026-12-04",
+                "end_date": "2026-12-05",
+            },
+            [{"article_id": article_id, "required_quantity": 2}],
+        )
+        self.assertNotEqual(first_event, second_event)
+
+    def test_event_save_preserves_item_identity_and_syncs_referenced_records(self):
+        article_id = create_article(
+            self.db, {"name": "Scheinwerfer", "quantity": 4}
+        )
+        event_id = save_event(
+            self.db,
+            {
+                "name": "Konzert",
+                "start_date": "2026-12-10",
+                "end_date": "2026-12-11",
+            },
+            [{"article_id": article_id, "required_quantity": 2}],
+        )
+        original_item = dict(self.db.query(
+            "SELECT id,sync_uuid FROM event_items WHERE event_id=?",
+            (event_id,),
+        )[0])
+        save_event(
+            self.db,
+            {
+                "name": "Konzert aktualisiert",
+                "start_date": "2026-12-10",
+                "end_date": "2026-12-12",
+            },
+            [{
+                "article_id": article_id,
+                "required_quantity": 3,
+                "issued_quantity": 2,
+                "returned_quantity": 1,
+                "damaged_quantity": 1,
+            }],
+            event_id=event_id,
+        )
+        updated_item = self.db.query(
+            """SELECT id,sync_uuid,required_quantity,issued_quantity,returned_quantity,
+                      damaged_quantity
+               FROM event_items WHERE event_id=?""",
+            (event_id,),
+        )[0]
+        self.assertEqual(updated_item["id"], original_item["id"])
+        self.assertEqual(updated_item["sync_uuid"], original_item["sync_uuid"])
+        self.assertEqual(
+            tuple(updated_item[key] for key in (
+                "required_quantity", "issued_quantity", "returned_quantity", "damaged_quantity"
+            )),
+            (3, 2, 1, 1),
+        )
+
+        snapshot = local_snapshot(self.db)
+        event_state = next(
+            item["state"]["data"] for item in snapshot.values()
+            if item["entity_type"] == "events"
+        )
+        item_state = next(
+            item["state"]["data"] for item in snapshot.values()
+            if item["entity_type"] == "event_items"
+        )
+        self.assertEqual(event_state["name"], "Konzert aktualisiert")
+        self.assertEqual(item_state["required_quantity"], 3)
+        self.assertIn(item_state["event_id"], {
+            entity_uuid for entity_uuid, record in snapshot.items()
+            if record["entity_type"] == "events"
+        })
+
+        remote = [
+            {
+                "id": entity_uuid,
+                "entity_type": item["entity_type"],
+                "data": item["state"]["data"],
+                "revision": 1,
+                "deleted": False,
+            }
+            for entity_uuid, item in snapshot.items()
+        ]
+        second_db = Database(Path(self.tempdir.name) / "event-sync.db")
+        try:
+            apply_cloud_snapshot(second_db, remote)
+            received = second_db.query(
+                """SELECT e.name,ei.required_quantity,a.name AS article_name
+                   FROM events e JOIN event_items ei ON ei.event_id=e.id
+                   JOIN articles a ON a.id=ei.article_id"""
+            )
+            self.assertEqual(
+                (received[0]["name"], received[0]["required_quantity"], received[0]["article_name"]),
+                ("Konzert aktualisiert", 3, "Scheinwerfer"),
+            )
+        finally:
+            second_db.close()
+
+    def test_event_rejects_invalid_issue_return_counts_and_protects_outstanding_items(self):
+        article_id = create_article(self.db, {"name": "Lampe", "quantity": 1})
+        event_data = {
+            "name": "Aufbau",
+            "start_date": "2026-12-20",
+            "end_date": "2026-12-20",
+        }
+        with self.assertRaisesRegex(ValueError, "Rückgabe"):
+            save_event(
+                self.db,
+                event_data,
+                [{
+                    "article_id": article_id,
+                    "required_quantity": 1,
+                    "issued_quantity": 1,
+                    "returned_quantity": 2,
+                }],
+            )
+        with self.assertRaisesRegex(ValueError, "offenen Rückgaben"):
+            save_event(
+                self.db,
+                {**event_data, "status": "Abgeschlossen"},
+                [{"article_id": article_id, "required_quantity": 1, "issued_quantity": 1}],
+            )
+        event_id = save_event(
+            self.db,
+            event_data,
+            [{"article_id": article_id, "required_quantity": 1, "issued_quantity": 1}],
+        )
+        with self.assertRaisesRegex(ValueError, "Ausgabe"):
+            delete_event(self.db, event_id)
+
+    def test_event_dialog_loads_article_assignments_and_issue_return_values(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        from main import EventDialog
+
+        app = QApplication.instance() or QApplication([])
+        article_id = create_article(self.db, {"name": "Scheinwerfer", "quantity": 3})
+        event_id = save_event(
+            self.db,
+            {
+                "name": "Stadtfest",
+                "start_date": "2026-12-24",
+                "end_date": "2026-12-25",
+            },
+            [{
+                "article_id": article_id,
+                "required_quantity": 2,
+                "issued_quantity": 2,
+                "returned_quantity": 1,
+                "damaged_quantity": 1,
+            }],
+        )
+        event = dict(self.db.query("SELECT * FROM events WHERE id=?", (event_id,))[0])
+        dialog = EventDialog(self.db, event)
+        self.assertEqual(dialog.item_table.rowCount(), 1)
+        self.assertEqual(
+            dialog.item_table.item(0, 0).data(Qt.UserRole),
+            article_id,
+        )
+        saved = dialog.data()
+        self.assertEqual(saved["event"]["name"], "Stadtfest")
+        self.assertEqual(saved["items"][0]["issued_quantity"], 2)
+        self.assertEqual(saved["items"][0]["returned_quantity"], 1)
+        self.assertEqual(saved["items"][0]["damaged_quantity"], 1)
+
+    def test_cloud_sync_pushes_event_children_before_parent_deletions(self):
+        article_id = create_article(self.db, {"name": "Lampe"})
+        event_id = save_event(
+            self.db,
+            {
+                "name": "Abbau",
+                "start_date": "2026-12-28",
+                "end_date": "2026-12-28",
+            },
+            [{"article_id": article_id, "required_quantity": 1}],
+        )
+        baseline = local_snapshot(self.db)
+        for entity_uuid, item in baseline.items():
+            self.db.execute(
+                """INSERT INTO sync_state(entity_uuid,entity_type,baseline_json,remote_revision)
+                   VALUES(?,?,?,1)""",
+                (entity_uuid, item["entity_type"], canonical_json(item["state"])),
+            )
+        delete_event(self.db, event_id)
+        pushes = plan_sync(self.db, local_snapshot(self.db), [
+            {
+                "id": entity_uuid,
+                "entity_type": item["entity_type"],
+                "data": item["state"]["data"],
+                "revision": 1,
+                "deleted": False,
+            }
+            for entity_uuid, item in baseline.items()
+        ])["pushes"]
+        event_deletions = [
+            change["entity_type"] for change in pushes
+            if change["deleted"] and change["entity_type"] in {"events", "event_items"}
+        ]
+        self.assertEqual(event_deletions, ["event_items", "events"])
+
+    def test_cloud_sync_updates_returns_before_closing_an_existing_event(self):
+        article_id = create_article(self.db, {"name": "Lampe"})
+        event_id = save_event(
+            self.db,
+            {
+                "name": "Konzert",
+                "start_date": "2026-12-29",
+                "end_date": "2026-12-29",
+            },
+            [{"article_id": article_id, "required_quantity": 1, "issued_quantity": 1}],
+        )
+        baseline = local_snapshot(self.db)
+        remote = []
+        for entity_uuid, item in baseline.items():
+            state = item["state"]
+            remote.append({
+                "id": entity_uuid,
+                "entity_type": item["entity_type"],
+                "data": state["data"],
+                "revision": 1,
+                "deleted": False,
+            })
+            self.db.execute(
+                """INSERT INTO sync_state(entity_uuid,entity_type,baseline_json,remote_revision)
+                   VALUES(?,?,?,1)""",
+                (entity_uuid, item["entity_type"], canonical_json(state)),
+            )
+        save_event(
+            self.db,
+            {
+                "name": "Konzert",
+                "start_date": "2026-12-29",
+                "end_date": "2026-12-29",
+                "status": "Abgeschlossen",
+            },
+            [{
+                "article_id": article_id,
+                "required_quantity": 1,
+                "issued_quantity": 1,
+                "returned_quantity": 1,
+            }],
+            event_id,
+        )
+        pushes = plan_sync(self.db, local_snapshot(self.db), remote)["pushes"]
+        event_changes = [
+            change["entity_type"] for change in pushes
+            if change["entity_type"] in {"events", "event_items"}
+        ]
+        self.assertEqual(event_changes, ["event_items", "events"])
 
     @unittest.skipUnless(sys.platform == "win32", "Windows DPAPI test")
     def test_cloud_shared_key_is_protected_with_windows_dpapi(self):

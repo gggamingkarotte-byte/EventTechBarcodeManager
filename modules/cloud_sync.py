@@ -59,12 +59,34 @@ SYNC_SPECS = {
         "fields": ("barcode", "expected_quantity", "scanned_quantity"),
         "refs": {"inventory_id": "inventories", "article_id": "articles"},
     },
+    "events": {
+        "fields": (
+            "name", "description", "location", "start_date", "end_date",
+            "contact", "organizer", "status", "notes",
+        ),
+        "refs": {},
+    },
+    "event_items": {
+        "fields": (
+            "required_quantity", "issued_quantity", "returned_quantity",
+            "missing_quantity", "damaged_quantity", "notes",
+        ),
+        "refs": {"event_id": "events", "article_id": "articles"},
+    },
 }
 
 SYNC_DEFAULTS = {
     "racks": {"width_cm": 120, "height_cm": 200},
     "levels": {"height_cm": 40},
     "barcodes": {"label": None, "scale": 100},
+    "event_items": {
+        "required_quantity": 1,
+        "issued_quantity": 0,
+        "returned_quantity": 0,
+        "missing_quantity": 0,
+        "damaged_quantity": 0,
+        "notes": None,
+    },
 }
 
 if set(SYNC_SPECS) != set(SYNC_TABLES):
@@ -167,6 +189,21 @@ def plan_sync(db: Database, snapshot: dict[str, dict], remote_records: list[dict
                 _make_push(entity_uuid, entity_type, local_state, remote_record["revision"])
             )
 
+    order = {entity_type: index for index, entity_type in enumerate(SYNC_TABLES)}
+    def push_order(change):
+        if change["deleted"]:
+            return (0, -order[change["entity_type"]])
+        closing_existing_event = (
+            change["entity_type"] == "events"
+            and change.get("expected_revision") is not None
+            and change.get("data", {}).get("status") in {"Abgeschlossen", "Abgesagt"}
+        )
+        return (
+            1,
+            len(SYNC_TABLES) if closing_existing_event else order[change["entity_type"]],
+        )
+
+    pushes.sort(key=push_order)
     return {"pushes": pushes, "conflicts": conflicts}
 
 

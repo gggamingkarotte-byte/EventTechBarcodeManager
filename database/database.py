@@ -9,7 +9,7 @@ from config import DATABASE_PATH, DATA_DIR, BACKUP_DIR, FILES_DIR
 SYNC_TABLES = (
     "warehouses", "racks", "levels", "boxes", "articles", "barcodes",
     "movements", "dmx_modes", "dmx_channels", "repairs", "scans",
-    "inventories", "inventory_items",
+    "inventories", "inventory_items", "events", "event_items",
 )
 
 
@@ -145,6 +145,30 @@ CREATE TABLE IF NOT EXISTS inventory_items (
     barcode TEXT NOT NULL,
     expected_quantity INTEGER NOT NULL DEFAULT 0,
     scanned_quantity INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    location TEXT,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    contact TEXT,
+    organizer TEXT,
+    status TEXT NOT NULL DEFAULT 'Geplant',
+    notes TEXT
+);
+CREATE TABLE IF NOT EXISTS event_items (
+    id INTEGER PRIMARY KEY,
+    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    required_quantity INTEGER NOT NULL DEFAULT 1 CHECK (required_quantity > 0),
+    issued_quantity INTEGER NOT NULL DEFAULT 0 CHECK (issued_quantity >= 0),
+    returned_quantity INTEGER NOT NULL DEFAULT 0 CHECK (returned_quantity >= 0),
+    missing_quantity INTEGER NOT NULL DEFAULT 0 CHECK (missing_quantity >= 0),
+    damaged_quantity INTEGER NOT NULL DEFAULT 0 CHECK (damaged_quantity >= 0),
+    notes TEXT,
+    UNIQUE(event_id, article_id)
 );
 CREATE TABLE IF NOT EXISTS sync_state (
     entity_uuid TEXT PRIMARY KEY,

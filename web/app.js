@@ -12,6 +12,11 @@ import { hasAutoUsageGuide, updateAutoUsageGuide } from "./usage-guides.js";
 const CONFIG_STORAGE_KEY = "eventtech.web.config.v1";
 const SESSION_STORAGE_KEY = "eventtech.web.session.v1";
 const PAGE_SIZE = 1000;
+const SYNC_ENTITY_ORDER = [
+  "warehouses", "racks", "levels", "boxes", "articles", "barcodes", "movements",
+  "dmx_modes", "dmx_channels", "repairs", "scans", "inventories", "inventory_items",
+  "events", "event_items",
+];
 const ARTICLE_STATUSES = [
   "Einsatzbereit",
   "Defekt",
@@ -29,6 +34,7 @@ let records = [];
 let recordsById = new Map();
 let activeArticle = null;
 let activeLocation = null;
+let activeEvent = null;
 let cameraStream = null;
 let cameraDetector = null;
 let zxingControls = null;
@@ -77,7 +83,11 @@ function cacheElements() {
     "supabase-config-confirm-wrap", "supabase-config-confirm", "supabase-config-action",
     "supabase-config-file-input",
     "dmx-add-mode-button", "article-attachments", "article-files-input", "article-files-list",
-    "article-files-note",
+    "article-files-note", "event-add-button", "event-rows", "event-dialog", "event-form",
+    "event-dialog-title", "event-name", "event-start-date", "event-end-date",
+    "event-location", "event-contact", "event-organizer", "event-status",
+    "event-description", "event-notes", "event-item-add-button", "event-item-rows",
+    "event-save-button",
   ].forEach((id) => {
     elements[id] = document.getElementById(id);
   });
@@ -337,8 +347,26 @@ function recordById(id, entityType = null) {
 }
 
 async function applySyncChanges(changes, reload = true) {
-  for (let start = 0; start < changes.length; start += 200) {
-    const batch = changes.slice(start, start + 200);
+  const entityOrder = new Map(SYNC_ENTITY_ORDER.map((type, index) => [type, index]));
+  const orderedChanges = [...changes].sort((left, right) => {
+    const leftDeleted = Boolean(left.deleted);
+    const rightDeleted = Boolean(right.deleted);
+    if (leftDeleted !== rightDeleted) return leftDeleted ? -1 : 1;
+    const leftOrder = entityOrder.get(left.entity_type) ?? SYNC_ENTITY_ORDER.length;
+    const rightOrder = entityOrder.get(right.entity_type) ?? SYNC_ENTITY_ORDER.length;
+    if (leftDeleted) return rightOrder - leftOrder;
+    const leftClosingEvent = left.entity_type === "events" &&
+      left.expected_revision != null &&
+      ["Abgeschlossen", "Abgesagt"].includes(left.data?.status);
+    const rightClosingEvent = right.entity_type === "events" &&
+      right.expected_revision != null &&
+      ["Abgeschlossen", "Abgesagt"].includes(right.data?.status);
+    const leftRank = leftClosingEvent ? SYNC_ENTITY_ORDER.length : leftOrder;
+    const rightRank = rightClosingEvent ? SYNC_ENTITY_ORDER.length : rightOrder;
+    return leftRank - rightRank;
+  });
+  for (let start = 0; start < orderedChanges.length; start += 200) {
+    const batch = orderedChanges.slice(start, start + 200);
     const result = await apiRequest("/rest/v1/rpc/eventtech_web_apply_sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -405,6 +433,7 @@ function renderWorkspace() {
   renderInventorySessions();
   renderInventoryRows();
   renderRepairs();
+  renderEvents();
   renderBarcodeLibrary();
   renderBarcodePdfItems();
   renderScanHistory();
@@ -632,6 +661,267 @@ function renderRepairs() {
       <td>${escapeHtml(record.data.completion_date ? formatDate(record.data.completion_date) : "—")}</td>
     </tr>`;
   }).join("");
+}
+
+function eventItemRecords(eventId) {
+  return typeRecords("event_items").filter((record) => record.data.event_id === eventId);
+}
+
+function eventReservationConflicts(eventData, items, eventId = null) {
+  if (["Abgeschlossen", "Abgesagt"].includes(eventData.status)) return [];
+  const eventsById = new Map(typeRecords("events").map((record) => [record.id, record]));
+  const conflicts = [];
+  for (const item of items) {
+    const article = recordById(item.article_id, "articles");
+    if (!article) throw new Error("Ein zugeordneter Artikel ist nicht mehr vorhanden.");
+    const reserved = typeRecords("event_items")
+      .filter((reservation) => {
+        if (reservation.data.article_id !== item.article_id ||
+            reservation.data.event_id === eventId) return false;
+        const event = eventsById.get(reservation.data.event_id);
+        if (!event || ["Abgeschlossen", "Abgesagt"].includes(event.data.status)) return false;
+        return event.data.start_date <= eventData.end_date &&
+          event.data.end_date >= eventData.start_date;
+      })
+      .reduce((total, reservation) =>
+        total + Number(reservation.data.required_quantity || 0), 0);
+    const available = Math.max(0, Number(article.data.quantity || 0) - reserved);
+    if (item.required_quantity > available) {
+      conflicts.push({
+        article_name: article.data.name || "Unbenannter Artikel",
+        requested: item.required_quantity,
+        available,
+      });
+    }
+  }
+  return conflicts;
+}
+
+function renderEvents() {
+  const events = typeRecords("events").slice().sort((left, right) =>
+    String(left.data.start_date || "").localeCompare(String(right.data.start_date || "")),
+  );
+  elements["event-rows"].innerHTML = events.map((record) => {
+    const items = eventItemRecords(record.id);
+    const quantity = items.reduce((sum, item) =>
+      sum + Number(item.data.required_quantity || 0), 0);
+    let conflictNotice = "";
+    try {
+      if (eventReservationConflicts(record.data, items.map((item) => item.data), record.id).length > 0) {
+        conflictNotice = ' <strong class="event-conflict">⚠ Konflikt</strong>';
+      }
+    } catch (error) {
+      console.error("Event-Konfliktstatus konnte nicht berechnet werden.", error);
+      conflictNotice = ' <strong class="event-conflict">⚠ Prüfung fehlgeschlagen</strong>';
+    }
+    return `<tr>
+      <td><strong>${escapeHtml(record.data.name || "Unbenanntes Event")}</strong></td>
+      <td>${escapeHtml(record.data.start_date || "—")} – ${escapeHtml(record.data.end_date || "—")}</td>
+      <td>${escapeHtml(record.data.location || "—")}</td>
+      <td>${items.length} Positionen · ${quantity} Stück</td>
+      <td>${escapeHtml(record.data.status || "Geplant")}${conflictNotice}</td>
+      <td>${escapeHtml(record.data.contact || "—")}</td>
+      <td><div class="table-actions">
+        <button class="button button-quiet" data-event-edit="${escapeHtml(record.id)}" type="button">Öffnen</button>
+        <button class="button button-quiet" data-event-delete="${escapeHtml(record.id)}" type="button">Löschen</button>
+      </div></td>
+    </tr>`;
+  }).join("");
+}
+
+function localDateValue() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 10);
+}
+
+function renderEventItemRows(items = []) {
+  const articles = typeRecords("articles").slice().sort((left, right) =>
+    String(left.data.name || "").localeCompare(String(right.data.name || ""), "de"),
+  );
+  elements["event-item-rows"].innerHTML = items.map((item) => {
+    const selectedArticleId = item.article_id || "";
+    const articleOptions = articles.map((article) =>
+      `<option value="${escapeHtml(article.id)}"${article.id === selectedArticleId ? " selected" : ""}>${escapeHtml(article.data.name || "Artikel")} · ${escapeHtml(article.data.model || "ohne Modell")} (Bestand ${escapeHtml(article.data.quantity ?? 0)})</option>`,
+    ).join("");
+    return `<tr data-event-item-id="${escapeHtml(item.id || "")}">
+      <td><select data-event-item-article required><option value="">Artikel wählen</option>${articleOptions}</select></td>
+      <td><input data-event-item-required type="number" min="1" step="1" required value="${escapeHtml(item.required_quantity ?? 1)}"></td>
+      <td><input data-event-item-issued type="number" min="0" step="1" value="${escapeHtml(item.issued_quantity ?? 0)}"></td>
+      <td><input data-event-item-returned type="number" min="0" step="1" value="${escapeHtml(item.returned_quantity ?? 0)}"></td>
+      <td><input data-event-item-missing type="number" min="0" step="1" value="${escapeHtml(item.missing_quantity ?? 0)}"></td>
+      <td><input data-event-item-damaged type="number" min="0" step="1" value="${escapeHtml(item.damaged_quantity ?? 0)}"></td>
+      <td><button class="button button-quiet" data-event-item-remove type="button">Entfernen</button></td>
+    </tr>`;
+  }).join("");
+}
+
+function openEventDialog(record = null) {
+  activeEvent = record;
+  const form = elements["event-form"];
+  form.reset();
+  const today = localDateValue();
+  elements["event-dialog-title"].innerHTML = record
+    ? 'Event bearbeiten<span class="heading-period">.</span>'
+    : 'Event anlegen<span class="heading-period">.</span>';
+  elements["event-name"].value = record?.data.name || "";
+  elements["event-start-date"].value = record?.data.start_date || today;
+  elements["event-end-date"].value = record?.data.end_date || today;
+  elements["event-location"].value = record?.data.location || "";
+  elements["event-contact"].value = record?.data.contact || "";
+  elements["event-organizer"].value = record?.data.organizer || "";
+  elements["event-status"].value = record?.data.status || "Geplant";
+  elements["event-description"].value = record?.data.description || "";
+  elements["event-notes"].value = record?.data.notes || "";
+  renderEventItemRows(record ? eventItemRecords(record.id).map((item) => ({
+    id: item.id,
+    ...item.data,
+  })) : []);
+  elements["event-save-button"].disabled = false;
+  elements["event-dialog"].showModal();
+  elements["event-name"].focus();
+}
+
+function addEventItemRow() {
+  if (!typeRecords("articles").length) {
+    showToast("Lege zuerst einen Artikel an.", true);
+    return;
+  }
+  const items = [...elements["event-item-rows"].querySelectorAll("tr")].map((row) => ({
+    id: row.dataset.eventItemId || "",
+    article_id: row.querySelector("[data-event-item-article]").value,
+    required_quantity: row.querySelector("[data-event-item-required]").value,
+    issued_quantity: row.querySelector("[data-event-item-issued]").value,
+    returned_quantity: row.querySelector("[data-event-item-returned]").value,
+    missing_quantity: row.querySelector("[data-event-item-missing]").value,
+    damaged_quantity: row.querySelector("[data-event-item-damaged]").value,
+  }));
+  items.push({});
+  renderEventItemRows(items);
+}
+
+async function saveEvent(event) {
+  event.preventDefault();
+  const form = elements["event-form"];
+  if (!form.reportValidity()) return;
+  const eventData = {
+    name: elements["event-name"].value.trim(),
+    description: elements["event-description"].value.trim(),
+    location: elements["event-location"].value.trim(),
+    start_date: elements["event-start-date"].value,
+    end_date: elements["event-end-date"].value,
+    contact: elements["event-contact"].value.trim(),
+    organizer: elements["event-organizer"].value.trim(),
+    status: elements["event-status"].value,
+    notes: elements["event-notes"].value.trim(),
+  };
+  if (!eventData.name) {
+    showToast("Bitte gib einen Eventnamen ein.", true);
+    return;
+  }
+  if (eventData.end_date < eventData.start_date) {
+    showToast("Das Enddatum darf nicht vor dem Startdatum liegen.", true);
+    return;
+  }
+  const seenArticles = new Set();
+  const items = [];
+  for (const row of elements["event-item-rows"].querySelectorAll("tr")) {
+    const articleId = row.querySelector("[data-event-item-article]").value;
+    const quantities = Object.fromEntries([
+      ["required_quantity", "[data-event-item-required]"],
+      ["issued_quantity", "[data-event-item-issued]"],
+      ["returned_quantity", "[data-event-item-returned]"],
+      ["missing_quantity", "[data-event-item-missing]"],
+      ["damaged_quantity", "[data-event-item-damaged]"],
+    ].map(([key, selector]) => [key, Number(row.querySelector(selector).value)]));
+    if (!articleId || seenArticles.has(articleId)) {
+      showToast("Wähle für jede Zeile einen eigenen Artikel aus.", true);
+      return;
+    }
+    seenArticles.add(articleId);
+    if (Object.values(quantities).some((value) => !Number.isInteger(value) || value < 0) ||
+        quantities.required_quantity < 1 ||
+        quantities.issued_quantity > quantities.required_quantity ||
+        quantities.returned_quantity + quantities.missing_quantity > quantities.issued_quantity ||
+        quantities.damaged_quantity > quantities.returned_quantity) {
+      showToast("Bitte prüfe benötigte, ausgegebene, zurückgegebene, fehlende und beschädigte Mengen.", true);
+      return;
+    }
+    items.push({ article_id: articleId, ...quantities });
+  }
+  if (["Abgeschlossen", "Abgesagt"].includes(eventData.status) &&
+      items.some((item) =>
+        item.issued_quantity > item.returned_quantity + item.missing_quantity)) {
+    showToast("Ein Event mit offenen Rückgaben kann nicht abgeschlossen oder abgesagt werden.", true);
+    return;
+  }
+
+  let conflicts;
+  try {
+    conflicts = eventReservationConflicts(eventData, items, activeEvent?.id || null);
+  } catch (error) {
+    showToast(`Reservierung konnte nicht geprüft werden: ${error.message}`, true);
+    return;
+  }
+  if (conflicts.length) {
+    const details = conflicts.map((item) =>
+      `${item.article_name}: benötigt ${item.requested}, verfügbar ${item.available}`,
+    ).join("\n");
+    if (!window.confirm(`Reservierungskonflikt:\n${details}\n\nTrotzdem speichern?`)) return;
+  }
+
+  const eventId = activeEvent?.id || crypto.randomUUID();
+  const existingItems = activeEvent ? eventItemRecords(eventId) : [];
+  const itemsByArticle = new Map(existingItems.map((item) => [item.data.article_id, item]));
+  const requestedIds = new Set(items.map((item) => item.article_id));
+  const changes = [syncChange("events", eventData, activeEvent, eventId)];
+  for (const item of items) {
+    const existing = itemsByArticle.get(item.article_id);
+    changes.push(syncChange("event_items", {
+      ...item,
+      event_id: eventId,
+    }, existing));
+  }
+  for (const existing of existingItems) {
+    if (!requestedIds.has(existing.data.article_id)) changes.push(deleteSyncChange(existing));
+  }
+  if (changes.length > 200) {
+    showToast("Dieses Event enthält zu viele Änderungen für einen atomaren Speichervorgang (maximal 200).", true);
+    return;
+  }
+
+  elements["event-save-button"].disabled = true;
+  try {
+    await applySyncChanges(changes);
+  } catch (error) {
+    showToast(`Event konnte nicht gespeichert werden: ${error.message}`, true);
+    elements["event-save-button"].disabled = false;
+    return;
+  }
+  elements["event-dialog"].close();
+  showToast(activeEvent ? "Event aktualisiert." : "Event angelegt.");
+  activeEvent = null;
+}
+
+async function deleteEvent(eventId) {
+  const record = recordById(eventId, "events");
+  if (!record) return;
+  const items = eventItemRecords(eventId);
+  const hasIssuedItems = items.some((item) => Number(item.data.issued_quantity || 0) > 0);
+  if (hasIssuedItems) {
+    showToast("Ein Event mit dokumentierter Ausgabe kann nicht gelöscht werden.", true);
+    return;
+  }
+  if (!window.confirm(`Event „${record.data.name}“ und alle Artikelzuordnungen löschen?`)) return;
+  try {
+    await applySyncChanges([
+      ...items.map((item) => deleteSyncChange(item)),
+      deleteSyncChange(record),
+    ]);
+    showToast("Event gelöscht.");
+  } catch (error) {
+    showToast(`Event konnte nicht gelöscht werden: ${error.message}`, true);
+  }
 }
 
 function renderBarcodeLibrary() {
@@ -1253,6 +1543,7 @@ async function importBackup(file) {
     const allowedTypes = new Set([
       "warehouses", "racks", "levels", "boxes", "articles", "barcodes", "movements",
       "dmx_modes", "dmx_channels", "repairs", "scans", "inventories", "inventory_items",
+      "events", "event_items",
     ]);
     if (backup?.format !== "eventtech-inventory-backup" || !Array.isArray(backup.records)) {
       throw new Error("Datei ist kein gültiges EventTech-Backup.");
@@ -2282,6 +2573,13 @@ function bindEvents() {
   });
   elements["repair-add-button"].addEventListener("click", openRepairDialog);
   document.getElementById("repair-form").addEventListener("submit", saveRepair);
+  elements["event-add-button"].addEventListener("click", () => openEventDialog());
+  elements["event-form"].addEventListener("submit", saveEvent);
+  elements["event-item-add-button"].addEventListener("click", addEventItemRow);
+  elements["event-item-rows"].addEventListener("click", (event) => {
+    const removeButton = event.target.closest("[data-event-item-remove]");
+    if (removeButton) removeButton.closest("tr").remove();
+  });
   elements["inventory-start-button"].addEventListener("click", startInventory);
   elements["inventory-scan-form"].addEventListener("submit", captureInventoryScan);
   elements["inventory-camera-button"].addEventListener("click", () => openScanner("inventory"));
@@ -2350,6 +2648,16 @@ function bindEvents() {
   });
   elements["settings-logout-button"].addEventListener("click", logOut);
   document.addEventListener("click", (event) => {
+    const editEventButton = event.target.closest("[data-event-edit]");
+    if (editEventButton) {
+      const record = recordById(editEventButton.dataset.eventEdit, "events");
+      if (record) openEventDialog(record);
+    }
+    const deleteEventButton = event.target.closest("[data-event-delete]");
+    if (deleteEventButton) {
+      deleteEvent(deleteEventButton.dataset.eventDelete)
+        .catch((error) => showToast(`Event konnte nicht gelöscht werden: ${error.message}`, true));
+    }
     const editButton = event.target.closest("[data-edit-article]");
     if (editButton) {
       const record = recordById(editButton.dataset.editArticle, "articles");

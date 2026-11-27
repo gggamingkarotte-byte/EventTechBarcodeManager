@@ -5,8 +5,9 @@ from copy import deepcopy
 import html
 import json
 import subprocess
+import sqlite3
 
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer, QUrl
+from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer, QUrl, QDate
 from PySide6.QtGui import QAction, QKeySequence, QPixmap, QBrush, QColor, QFont, QPen, QPainter, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QFormLayout, QDialog, QDialogButtonBox, QComboBox, QTextEdit, QCheckBox,
     QFileDialog, QMessageBox, QSpinBox, QTabWidget, QSplitter,
     QInputDialog, QGraphicsView, QGraphicsScene, QAbstractItemView,
-    QScrollArea,
+    QScrollArea, QDateEdit,
 )
 
 from config import APP_NAME, APP_VERSION, DATA_DIR
@@ -41,6 +42,12 @@ from modules.supabase_config_file import (
 )
 from modules.usage_guides import (
     has_auto_usage_guide, manufacturer_manual_search_url, update_auto_usage_guide,
+)
+from modules.events import (
+    EVENT_STATUSES,
+    ReservationConflictError,
+    delete_event as remove_event,
+    save_event as persist_event,
 )
 
 
@@ -1121,6 +1128,180 @@ class ArticleDetailsDialog(QDialog):
         )
 
 
+class EventDialog(QDialog):
+    def __init__(self, db: Database, event=None, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Event bearbeiten" if event else "Event anlegen")
+        self.resize(900, 760)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.name = QLineEdit(event["name"] if event else "")
+        self.description = QTextEdit(event["description"] if event else "")
+        self.location = QLineEdit(event["location"] if event else "")
+        self.contact = QLineEdit(event["contact"] if event else "")
+        self.organizer = QLineEdit(event["organizer"] if event else "")
+        self.start_date = self._date_edit(event["start_date"] if event else None)
+        self.end_date = self._date_edit(event["end_date"] if event else None)
+        self.status = QComboBox()
+        self.status.addItems(EVENT_STATUSES)
+        if event:
+            self.status.setCurrentText(event["status"])
+        self.notes = QTextEdit(event["notes"] if event else "")
+        form.addRow("Eventname", self.name)
+        form.addRow("Beschreibung", self.description)
+        form.addRow("Ort", self.location)
+        form.addRow("Startdatum", self.start_date)
+        form.addRow("Enddatum", self.end_date)
+        form.addRow("Ansprechpartner", self.contact)
+        form.addRow("Kunde / Veranstalter", self.organizer)
+        form.addRow("Status", self.status)
+        form.addRow("Notizen", self.notes)
+        layout.addLayout(form)
+
+        layout.addWidget(QLabel("Einzelne Artikel und Rückgabe erfassen"))
+        self.item_table = QTableWidget(0, 6)
+        self.item_table.setHorizontalHeaderLabels(
+            ["Artikel", "Benötigt", "Ausgegeben", "Zurück", "Fehlend", "Beschädigt"]
+        )
+        self.item_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.item_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.item_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.item_table, 1)
+
+        item_buttons = QHBoxLayout()
+        add_item = QPushButton("Artikel hinzufügen")
+        add_item.clicked.connect(self._add_article)
+        remove_item = QPushButton("Auswahl entfernen")
+        remove_item.clicked.connect(self._remove_article)
+        item_buttons.addWidget(add_item)
+        item_buttons.addWidget(remove_item)
+        item_buttons.addStretch(1)
+        layout.addLayout(item_buttons)
+
+        if event:
+            for item in db.query(
+                """SELECT ei.*,a.name AS article_name
+                   FROM event_items ei JOIN articles a ON a.id=ei.article_id
+                   WHERE ei.event_id=? ORDER BY a.name""",
+                (event["id"],),
+            ):
+                self._append_item(
+                    item["article_id"], item["article_name"],
+                    item["required_quantity"], item["issued_quantity"],
+                    item["returned_quantity"], item["missing_quantity"],
+                    item["damaged_quantity"],
+                )
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.name.setFocus()
+
+    @staticmethod
+    def _date_edit(value):
+        edit = QDateEdit()
+        edit.setCalendarPopup(True)
+        edit.setDisplayFormat("yyyy-MM-dd")
+        parsed = QDate.fromString(str(value or ""), "yyyy-MM-dd")
+        edit.setDate(parsed if parsed.isValid() else QDate.currentDate())
+        return edit
+
+    @staticmethod
+    def _quantity_spin(value, minimum=0):
+        spin = QSpinBox()
+        spin.setRange(minimum, 100000)
+        spin.setValue(int(value))
+        return spin
+
+    def _append_item(
+        self, article_id, article_name, required=1, issued=0,
+        returned=0, missing=0, damaged=0,
+    ):
+        row = self.item_table.rowCount()
+        self.item_table.insertRow(row)
+        article_cell = QTableWidgetItem(str(article_name))
+        article_cell.setData(Qt.UserRole, int(article_id))
+        self.item_table.setItem(row, 0, article_cell)
+        for column, value, minimum in (
+            (1, required, 1), (2, issued, 0), (3, returned, 0),
+            (4, missing, 0), (5, damaged, 0),
+        ):
+            self.item_table.setCellWidget(
+                row, column, self._quantity_spin(value, minimum)
+            )
+        self.item_table.resizeColumnsToContents()
+
+    def _add_article(self):
+        existing_ids = {
+            self.item_table.item(row, 0).data(Qt.UserRole)
+            for row in range(self.item_table.rowCount())
+        }
+        articles = [
+            row for row in self.db.query("SELECT id,name,model FROM articles ORDER BY name")
+            if row["id"] not in existing_ids
+        ]
+        if not articles:
+            QMessageBox.information(
+                self, "Event-Artikel", "Es gibt keine weiteren Artikel zum Zuordnen."
+            )
+            return
+        labels = [
+            f"#{row['id']} — {row['name']}"
+            + (f" ({row['model']})" if row["model"] else "")
+            for row in articles
+        ]
+        selected, accepted = QInputDialog.getItem(
+            self, "Artikel zuordnen", "Artikel:", labels, 0, False
+        )
+        if accepted:
+            article = articles[labels.index(selected)]
+            self._append_item(article["id"], article["name"])
+
+    def _remove_article(self):
+        row = self.item_table.currentRow()
+        if row >= 0:
+            self.item_table.removeRow(row)
+
+    def data(self):
+        items = []
+        for row in range(self.item_table.rowCount()):
+            item = {"article_id": self.item_table.item(row, 0).data(Qt.UserRole)}
+            for column, key in (
+                (1, "required_quantity"), (2, "issued_quantity"),
+                (3, "returned_quantity"), (4, "missing_quantity"),
+                (5, "damaged_quantity"),
+            ):
+                item[key] = self.item_table.cellWidget(row, column).value()
+            items.append(item)
+        return {
+            "event": {
+                "name": self.name.text(),
+                "description": self.description.toPlainText(),
+                "location": self.location.text(),
+                "start_date": self.start_date.date().toString(Qt.ISODate),
+                "end_date": self.end_date.date().toString(Qt.ISODate),
+                "contact": self.contact.text(),
+                "organizer": self.organizer.text(),
+                "status": self.status.currentText(),
+                "notes": self.notes.toPlainText(),
+            },
+            "items": items,
+        }
+
+    def _accept_if_valid(self):
+        if not self.name.text().strip():
+            QMessageBox.warning(self, "Eventname fehlt", "Bitte gib einen Eventnamen ein.")
+            return
+        if self.end_date.date() < self.start_date.date():
+            QMessageBox.warning(
+                self, "Ungültiger Zeitraum", "Das Enddatum darf nicht vor dem Startdatum liegen."
+            )
+            return
+        self.accept()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1145,7 +1326,7 @@ class MainWindow(QMainWindow):
         self.menu = QListWidget()
         entries = ["Dashboard", "Lesemodus", "Artikel", "Lagerverwaltung", "Inventur",
                    "Reparaturen", "Barcode-Programmierung", "Scan-Verlauf", "Einstellungen",
-                   "Regal-Grafik"]
+                   "Regal-Grafik", "Events"]
         self.menu.addItems(entries)
         self.menu.currentRowChanged.connect(self.open_page)
         main_layout.addWidget(self.menu)
@@ -1162,6 +1343,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.scans_page())
         self.pages.addWidget(self.settings_page())
         self.pages.addWidget(self.rack_graphic_page())
+        self.pages.addWidget(self.events_page())
 
         self.menu.setCurrentRow(0)
         self.install_barcode_shortcut()
@@ -1190,6 +1372,8 @@ class MainWindow(QMainWindow):
             self.refresh_repairs()
         elif index == 9:
             self.refresh_rack_warehouse_choices()
+        elif index == 10:
+            self.refresh_events()
 
     def install_barcode_shortcut(self):
         action = QAction(self)
@@ -1225,6 +1409,7 @@ class MainWindow(QMainWindow):
             ("Inventur starten", lambda: self.menu.setCurrentRow(4)),
             ("Lagerverwaltung", lambda: self.menu.setCurrentRow(3)),
             ("Reparaturverwaltung", lambda: self.menu.setCurrentRow(5)),
+            ("Events", lambda: self.menu.setCurrentRow(10)),
         ]
         for text, handler in actions:
             button = QPushButton(text)
@@ -1856,6 +2041,123 @@ class MainWindow(QMainWindow):
             return
         if dialog.exec():
             self.move_rack_entity(entity_type.currentData(), source.currentData(), target.currentData())
+
+    def events_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.addWidget(QLabel("Events und Geräteplanung"))
+        toolbar = QHBoxLayout()
+        for text, handler in (
+            ("Event anlegen", self.add_event),
+            ("Bearbeiten / Ausgabe / Rückgabe", self.edit_event),
+            ("Event löschen", self.delete_event),
+        ):
+            button = QPushButton(text)
+            button.clicked.connect(handler)
+            toolbar.addWidget(button)
+        toolbar.addStretch(1)
+        layout.addLayout(toolbar)
+        self.event_table = QTableWidget(0, 6)
+        self.event_table.setHorizontalHeaderLabels(
+            ["Event", "Zeitraum", "Ort", "Artikelpositionen", "Status", "Ansprechpartner"]
+        )
+        self.event_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.event_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.event_table.setSortingEnabled(True)
+        self.event_table.horizontalHeader().setStretchLastSection(True)
+        self.event_table.cellDoubleClicked.connect(lambda _row, _column: self.edit_event())
+        layout.addWidget(self.event_table)
+        return page
+
+    def refresh_events(self):
+        rows = self.db.query(
+            """SELECT e.id,e.name,e.start_date,e.end_date,e.location,e.status,e.contact,
+                      COUNT(ei.id) AS item_count
+               FROM events e LEFT JOIN event_items ei ON ei.event_id=e.id
+               GROUP BY e.id ORDER BY e.start_date,e.name"""
+        )
+        sorting = self.event_table.isSortingEnabled()
+        self.event_table.setSortingEnabled(False)
+        self.event_table.setRowCount(len(rows))
+        for row_index, event in enumerate(rows):
+            values = (
+                event["name"], f"{event['start_date']} – {event['end_date']}",
+                event["location"] or "—", event["item_count"], event["status"],
+                event["contact"] or "—",
+            )
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                if column == 0:
+                    cell.setData(Qt.UserRole, event["id"])
+                self.event_table.setItem(row_index, column, cell)
+        self.event_table.setSortingEnabled(sorting)
+        self.event_table.resizeColumnsToContents()
+
+    def _selected_event_id(self):
+        row = self.event_table.currentRow()
+        item = self.event_table.item(row, 0) if row >= 0 else None
+        return item.data(Qt.UserRole) if item else None
+
+    def add_event(self):
+        dialog = EventDialog(self.db, parent=self)
+        if dialog.exec():
+            self._save_event_dialog(dialog)
+
+    def edit_event(self):
+        event_id = self._selected_event_id()
+        if event_id is None:
+            QMessageBox.information(self, "Event auswählen", "Bitte wähle zuerst ein Event aus.")
+            return
+        event = self.db.query("SELECT * FROM events WHERE id=?", (event_id,))
+        if not event:
+            QMessageBox.warning(self, "Event nicht gefunden", "Der Event wurde zwischenzeitlich gelöscht.")
+            self.refresh_events()
+            return
+        dialog = EventDialog(self.db, dict(event[0]), self)
+        if dialog.exec():
+            self._save_event_dialog(dialog, event_id)
+
+    def _save_event_dialog(self, dialog, event_id=None):
+        payload = dialog.data()
+        try:
+            persist_event(self.db, payload["event"], payload["items"], event_id)
+        except ReservationConflictError as exc:
+            QMessageBox.warning(
+                self,
+                "Reservierungskonflikt",
+                f"{exc}\n\nPasse den Zeitraum, die Menge oder die Reservierungen an, bevor du speicherst.",
+            )
+            return
+        except (ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, "Event konnte nicht gespeichert werden", str(exc))
+            return
+        self.refresh_events()
+        if hasattr(self, "refresh_dashboard"):
+            self.refresh_dashboard()
+        self.statusBar().showMessage(
+            "Event gespeichert.", 4000
+        )
+
+    def delete_event(self):
+        event_id = self._selected_event_id()
+        if event_id is None:
+            QMessageBox.information(self, "Event auswählen", "Bitte wähle zuerst ein Event aus.")
+            return
+        if QMessageBox.question(
+            self,
+            "Event löschen",
+            "Event und seine Artikelzuordnungen wirklich löschen? Dieser Vorgang kann nicht rückgängig gemacht werden.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            remove_event(self.db, event_id)
+        except (ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, "Event konnte nicht gelöscht werden", str(exc))
+            return
+        self.refresh_events()
 
     def inventory_page(self):
         page = QWidget()
@@ -3153,6 +3455,8 @@ class MainWindow(QMainWindow):
             self.refresh_warehouses()
             self.refresh_repairs()
             self.refresh_scans()
+            if hasattr(self, "event_table"):
+                self.refresh_events()
 
     def start_ipad_scanner(self):
         if self.ipad_server:

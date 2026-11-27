@@ -321,6 +321,13 @@ tbody tr:hover { background: #fbfcf8; }
 .pending-user > div:first-child { display: grid; gap: 4px; min-width: 0; }
 .pending-user strong { overflow-wrap: anywhere; font-size: 11px; }
 .pending-user small { color: var(--muted); font-size: 10px; }
+.event-items-heading { margin-top: 21px; }
+.event-items-wrap { max-height: 310px; overflow: auto; }
+.event-items-wrap table { min-width: 760px; }
+.event-items-wrap input, .event-items-wrap select { min-width: 86px; min-height: 36px; padding-inline: 8px; font-size: 10px; }
+.event-items-wrap td:first-child select { min-width: 210px; }
+.event-items-wrap .button { min-height: 34px; padding-inline: 9px; font-size: 9px; }
+.event-conflict { color: var(--red); white-space: nowrap; }
 
 .web-note { display: flex; align-items: center; gap: 16px; margin-bottom: 76px; padding: 19px 22px; background: #e8eee6; }
 .note-mark { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; color: #465444; border: 1px solid #b9c9b0; border-radius: 50%; font: 12px var(--mono); }
