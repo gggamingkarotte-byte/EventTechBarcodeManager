@@ -100,11 +100,12 @@ Die Kamera kann auf unterstützten
 Geräten als Scanner verwendet werden; USB-/Bluetooth-HID-Scanner funktionieren über das Eingabefeld.
 Fotos und Dokumente lassen sich für Web-Nutzer privat in Supabase speichern.
 
-Die Webseite wird statisch über GitHub Pages ausgeliefert. Artikeldaten bleiben in Supabase; die Webseite
-verwendet Supabase Auth und legt weder den `service_role`-Key noch den Desktop-Organisationsschlüssel im
-öffentlichen Repository ab. Jeder angemeldete Supabase-Benutzer dieses Projekts kann den gemeinsamen
-Inventarbestand lesen und bearbeiten. Daher öffentliche Registrierung deaktivieren und nur vertrauenswürdige
-Benutzerkonten anlegen.
+Die Webseite wird statisch über GitHub Pages ausgeliefert. Artikeldaten bleiben in Supabase. Der öffentliche
+Publishable-/anon-Key und die Projekt-URL sind in `web/supabase-config.js` als Standardverbindung hinterlegt
+und werden beim ersten Aufruf im Browser gespeichert; sie müssen nicht pro Gerät eingegeben werden. Diese
+öffentlichen Werte gewähren allein keinen Datenzugriff. Die Supabase-Richtlinien erlauben Lesen, Schreiben und
+Dateizugriff ausschließlich für freigegebene Konten. Der `service_role`-Key und der Desktop-Organisationsschlüssel
+gehören niemals in die Webseite oder das öffentliche Repository.
 
 ### Einrichten
 
@@ -116,22 +117,43 @@ Benutzerkonten anlegen.
    bereit; direkte Schreibrechte auf der Synchronisierungstabelle werden nicht vergeben.
 3. Führe `supabase\migrations\202611250001_eventtech_web_attachments.sql` aus. Sie erstellt den privaten
    Datei-Bucket und die Metadatentabelle für Web-Anhänge (bis zu 20 MB pro Datei).
-4. Aktiviere in Supabase **Authentication → Providers → Email** und deaktiviere öffentliche Registrierungen.
-   Lege die benötigten Benutzer im Supabase-Dashboard unter **Authentication → Users** an bzw. lade sie ein.
-5. Ergänze unter **Authentication → URL Configuration** die GitHub-Pages-Adresse als Site URL und erlaubte
+4. Erstelle zuerst dein eigenes Konto unter **Authentication → Users** im Supabase-Dashboard und setze dort
+   ein starkes, eigenes Passwort. Führe dann `supabase\migrations\202611260001_eventtech_web_approval.sql`
+   aus. Die Migration sperrt alle noch nicht freigegebenen Konten sowohl für Bestandsdaten als auch für
+   Datei-Anhänge.
+5. Weise deinem Konto im Supabase **SQL Editor** einmalig die Adminrolle zu. Ersetze den Platzhalter durch
+   deine Admin-E-Mail-Adresse:
+
+   ```sql
+   update public.eventtech_web_profiles
+   set role = 'admin', status = 'approved'
+   where user_id = (
+       select id from auth.users
+       where lower(email) = lower('ADMIN_EMAIL_HERE')
+   );
+   ```
+
+   Es gibt absichtlich kein öffentlich fest eingebautes `admin/admin`-Passwort. Der Admin meldet sich mit
+   der E-Mail und dem bei der Kontoerstellung gesetzten Passwort an. Das Passwort kann später unter
+   **Einstellungen → Passwort ändern** geändert werden.
+6. Aktiviere in Supabase **Authentication → Providers → Email** die E-Mail-Anmeldung und Registrierung.
+   Neue Konten erscheinen zunächst als ausstehend und erhalten erst nach Freigabe durch den Admin Zugriff.
+   Lass die E-Mail-Bestätigung aktiviert, damit sich niemand mit einer fremden Adresse registrieren kann.
+7. Ergänze unter **Authentication → URL Configuration** die GitHub-Pages-Adresse als Site URL und erlaubte
    Redirect URL: `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/`.
-6. Öffne im GitHub-Repository **Settings → Pages** und wähle **GitHub Actions** als Build-/Deployment-Quelle.
+8. Öffne im GitHub-Repository **Settings → Pages** und wähle **GitHub Actions** als Build-/Deployment-Quelle.
    Der Workflow `.github\workflows\deploy-web.yml` veröffentlicht den Ordner `web` automatisch nach Pushes
    auf `main`; ein manueller Start ist auch unter **Actions → Deploy inventory web app → Run workflow** möglich.
-7. Rufe `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/` auf. Gib einmalig die Supabase-
-   Projekt-URL und den öffentlichen Publishable-/anon-Key ein und melde dich mit einem angelegten Benutzer an.
-   Projektkonfiguration und Sitzung werden nur im lokalen Browser gespeichert; auf gemeinsam genutzten
-   Geräten nach der Nutzung abmelden.
+9. Rufe `https://gggamingkarotte-byte.github.io/EventTechBarcodeManager/` auf und melde dich mit deinem
+   Admin-Konto an. In **Einstellungen → Konten freigeben** kannst du neue Registrierungen genehmigen oder
+   ablehnen. Die Anmeldung bleibt auf dem jeweiligen Browser gespeichert; auf gemeinsam genutzten Geräten
+   nach der Nutzung abmelden.
 
-Die Supabase-Verbindung lässt sich über **Datei exportieren/importieren** als passwortgeschützte JSON-Datei
-zwischen Browsern und der Desktop-App übertragen. Die Website-Datei enthält nur Projekt-URL und öffentlichen
-Schlüssel; der Browser speichert den Organisationsschlüssel nicht. Beim Import einer Desktop-Datei wird dieser
-Schlüssel daher nicht in der Website abgelegt. Das Dateipasswort muss mindestens 12 Zeichen lang sein.
+Die voreingestellte Browserverbindung kann bei Bedarf unter **Einstellungen → Supabase-Verbindung** als
+passwortgeschützte JSON-Datei exportiert oder importiert werden. Die Website-Datei enthält nur Projekt-URL
+und öffentlichen Schlüssel; der Browser speichert den Organisationsschlüssel nicht. Beim Import einer
+Desktop-Datei wird dieser Schlüssel daher nicht in der Website abgelegt. Das Dateipasswort muss mindestens
+12 Zeichen lang sein.
 
 Für die Desktop-App-Cloud-Synchronisierung richte zusätzlich die oben beschriebene Edge Function ein.
 Für lokale Web-Entwicklung installiere Node.js, führe `npm ci` und `npm run build` im Ordner `web` aus und

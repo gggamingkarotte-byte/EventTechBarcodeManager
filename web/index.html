@@ -32,33 +32,16 @@
       <div class="hero-copy">
         <p class="eyebrow"><span class="eyebrow-dot"></span> INVENTAR · IM BROWSER</p>
         <h1>Alles da.<br><span>Alles am Platz.</span></h1>
-        <p class="hero-description">Dein Bestand an Veranstaltungstechnik – durchsuchbar, aktuell und überall dort verfügbar, wo du dich sicher anmeldest.</p>
-        <div class="trust-note"><span class="shield-icon">◆</span><span>Anmeldung über dein Supabase-Projekt. Der öffentliche GitHub-Code enthält keine Zugangsdaten.</span></div>
+        <p class="hero-description">Dein Bestand an Veranstaltungstechnik – durchsuchbar, aktuell und nach Freigabe überall verfügbar.</p>
+        <div class="trust-note"><span class="shield-icon">◆</span><span>Einmal anmelden: Diese Anmeldung bleibt auf diesem Browser gespeichert. Neue Konten benötigen die Freigabe des Admins.</span></div>
       </div>
 
       <section class="gate-card" aria-labelledby="gate-title">
         <div class="gate-card-heading">
-          <span class="step-index">01 / VERBINDUNG</span>
-          <h2 id="gate-title">Projekt verbinden</h2>
-          <p>Trage die Projekt-URL und den öffentlichen Publishable-/anon-Key aus Supabase ein. Beides ist kein geheimer Schlüssel.</p>
+          <span class="step-index">01 / KONTO</span>
+          <h2 id="gate-title">Willkommen zurück</h2>
+          <p>Die Verbindung zum Lager ist bereits eingerichtet. Melde dich an oder erstelle ein Konto zur Adminfreigabe.</p>
         </div>
-        <form id="config-form" class="stack-form">
-          <label>Supabase-Projekt-URL
-            <input id="project-url" name="project-url" type="url" placeholder="https://deinprojekt.supabase.co" autocomplete="url" required>
-          </label>
-          <label>Publishable-/anon-Key
-            <input id="publishable-key" name="publishable-key" type="password" placeholder="sb_publishable_… oder anon key" autocomplete="off" required>
-          </label>
-          <button class="button button-primary button-wide" type="submit">Verbindung speichern <span aria-hidden="true">↗</span></button>
-        </form>
-        <div class="config-file-actions">
-          <p>Verbindungseinstellungen lassen sich passwortgeschützt zwischen Website und Desktop-App übertragen.</p>
-          <div class="feature-actions">
-            <button class="button button-quiet" type="button" data-config-file-action="import">Datei importieren</button>
-            <button class="button button-quiet" type="button" data-config-file-action="export">Datei exportieren</button>
-          </div>
-        </div>
-
         <div class="gate-divider"><span>ANMELDUNG</span></div>
         <form id="login-form" class="stack-form">
           <label>E-Mail
@@ -67,9 +50,28 @@
           <label>Passwort
             <input id="password" name="password" type="password" autocomplete="current-password" required>
           </label>
-          <button class="button button-dark button-wide" id="login-button" type="submit" disabled>Anmelden</button>
+          <div class="feature-actions">
+            <button class="button button-dark" id="login-button" type="submit">Anmelden</button>
+            <button class="button button-quiet" id="create-account-button" type="button">Konto erstellen</button>
+          </div>
         </form>
-        <p class="gate-footnote">Benutzerkonten werden von der Projektverwaltung angelegt. Eine öffentliche Registrierung ist nicht verfügbar.</p>
+        <p class="gate-footnote">Neue Konten können sich erst nach Adminfreigabe anmelden. Verwende mindestens 12 Zeichen für dein Passwort.</p>
+        <details class="config-file-actions">
+          <summary>Projektverbindung ändern oder übertragen</summary>
+          <form id="config-form" class="stack-form">
+            <label>Supabase-Projekt-URL
+              <input id="project-url" name="project-url" type="url" autocomplete="url" required>
+            </label>
+            <label>Publishable-/anon-Key
+              <input id="publishable-key" name="publishable-key" type="password" autocomplete="off" required>
+            </label>
+            <button class="button button-primary button-wide" type="submit">Verbindung speichern</button>
+          </form>
+          <div class="feature-actions">
+            <button class="button button-quiet" type="button" data-config-file-action="import">Datei importieren</button>
+            <button class="button button-quiet" type="button" data-config-file-action="export">Datei exportieren</button>
+          </div>
+        </details>
       </section>
     </section>
 
@@ -302,7 +304,7 @@
           </article>
           <article class="settings-card">
             <h3>Supabase-Verbindung</h3>
-            <p>Projekt-URL und öffentlicher Schlüssel lassen sich verschlüsselt sichern. Die Website speichert keinen Organisationsschlüssel.</p>
+            <p>Projekt-URL und öffentlicher Schlüssel sind bereits für alle Geräte eingerichtet. Die Werte sind öffentliche Supabase-Projektangaben, keine Admin-Zugangsdaten.</p>
             <div class="feature-actions">
               <button class="button button-quiet" type="button" data-config-file-action="export">Verbindung exportieren</button>
               <button class="button button-quiet" type="button" data-config-file-action="import">Verbindung importieren</button>
@@ -312,6 +314,21 @@
             <h3>Angemeldet</h3>
             <p id="settings-account">—</p>
             <button class="button button-quiet" id="settings-logout-button" type="button">Abmelden</button>
+          </article>
+          <article class="settings-card">
+            <h3>Passwort ändern</h3>
+            <form id="change-password-form" class="stack-form">
+              <label>Aktuelles Passwort<input id="current-password" type="password" autocomplete="current-password" required></label>
+              <label>Neues Passwort<input id="new-password" type="password" minlength="12" autocomplete="new-password" required></label>
+              <label>Neues Passwort wiederholen<input id="confirm-password" type="password" minlength="12" autocomplete="new-password" required></label>
+              <button class="button button-quiet" type="submit">Passwort aktualisieren</button>
+            </form>
+          </article>
+          <article class="settings-card admin-approval-card" id="admin-approval-card" hidden>
+            <h3>Konten freigeben</h3>
+            <p>Neue Konten erhalten erst nach deiner Freigabe Zugriff auf Bestandsdaten und Anhänge.</p>
+            <div class="feature-actions"><button class="button button-quiet" id="refresh-pending-users" type="button">Anfragen aktualisieren</button></div>
+            <div class="pending-users-list" id="pending-users-list"></div>
           </article>
         </div>
       </section>

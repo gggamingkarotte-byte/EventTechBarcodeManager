@@ -7,6 +7,11 @@ const AAD = new TextEncoder().encode("eventtech-supabase-config:v1");
 const MAX_FILE_SIZE = 64 * 1024;
 const MIN_PASSWORD_LENGTH = 12;
 
+export const DEFAULT_SUPABASE_CONFIG = Object.freeze({
+  url: "https://gqybdurfhnuovygamsqu.supabase.co",
+  anonKey: "sb_publishable_C-laH-9z6fqzKcZhfKKEvQ_xgf8ssKK",
+});
+
 function toBase64(bytes) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);

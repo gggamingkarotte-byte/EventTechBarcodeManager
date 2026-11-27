@@ -2,7 +2,11 @@
 
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import bwipjs from "bwip-js";
-import { decryptSupabaseConfig, encryptSupabaseConfig } from "./supabase-config.js";
+import {
+  DEFAULT_SUPABASE_CONFIG,
+  decryptSupabaseConfig,
+  encryptSupabaseConfig,
+} from "./supabase-config.js";
 import { hasAutoUsageGuide, updateAutoUsageGuide } from "./usage-guides.js";
 
 const CONFIG_STORAGE_KEY = "eventtech.web.config.v1";
@@ -20,6 +24,7 @@ const elements = {};
 let projectConfig = null;
 let session = null;
 let currentUser = null;
+let currentProfile = null;
 let records = [];
 let recordsById = new Map();
 let activeArticle = null;
@@ -42,7 +47,7 @@ function cacheElements() {
   [
     "boot-screen", "topbar", "connection-state", "gate", "app-shell", "logout-button",
     "config-form", "project-url", "publishable-key", "login-form", "email", "password",
-    "login-button", "inventory", "metric-articles", "metric-locations", "metric-ready", "article-rows",
+    "login-button", "create-account-button", "inventory", "metric-articles", "metric-locations", "metric-ready", "article-rows",
     "empty-state", "empty-title", "empty-copy", "empty-create-button", "search-input",
     "status-filter", "refresh-button", "new-article-button", "scan-open-button",
     "signed-in-email", "location-cards", "article-dialog", "article-dialog-title",
@@ -66,6 +71,8 @@ function cacheElements() {
     "scan-export-button", "camera-device-select", "scanner-prefix", "scanner-suffix",
     "camera-refresh-button", "backup-export-button", "backup-import-button",
     "backup-file-input", "settings-account", "settings-logout-button",
+    "change-password-form", "current-password", "new-password", "confirm-password",
+    "admin-approval-card", "refresh-pending-users", "pending-users-list",
     "supabase-config-dialog", "supabase-config-description", "supabase-config-password",
     "supabase-config-confirm-wrap", "supabase-config-confirm", "supabase-config-action",
     "supabase-config-file-input",
@@ -160,10 +167,10 @@ async function readResponse(response) {
   return payload;
 }
 
-async function authRequest(path, body, accessToken = null) {
+async function authRequest(path, body, accessToken = null, method = "POST") {
   if (!projectConfig) throw new Error("Bitte zuerst dein Supabase-Projekt verbinden.");
   const response = await fetch(`${projectConfig.url}/auth/v1/${path}`, {
-    method: "POST",
+    method,
     headers: headersFor(accessToken, { "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
@@ -248,8 +255,8 @@ async function exportSupabaseConfigFile() {
     throw new Error("Die Dateipasswörter stimmen nicht überein.");
   }
   const settings = {
-    project_url: normalizeProjectUrl(elements["project-url"].value),
-    public_key: elements["publishable-key"].value.trim(),
+    project_url: projectConfig.url,
+    public_key: projectConfig.anonKey,
   };
   if (settings.public_key.length < 20) {
     throw new Error("Der Publishable-/anon-Key sieht unvollständig aus.");
@@ -295,6 +302,8 @@ function setAuthenticatedView(isAuthenticated) {
     setConnectionStatus(projectConfig ? "Projekt bereit · anmelden" : "Nicht verbunden");
     records = [];
     recordsById = new Map();
+    currentProfile = null;
+    elements["admin-approval-card"].hidden = true;
     return;
   }
   setConnectionStatus("Angemeldet · live", true);
@@ -731,6 +740,7 @@ function renderRackGraphic() {
 
 function renderSettings() {
   elements["settings-account"].textContent = currentUser?.email || "Nicht angemeldet";
+  elements["admin-approval-card"].hidden = currentProfile?.role !== "admin";
   const settings = readStorage("eventtech.web.settings.v1") || {};
   if (document.activeElement !== elements["scanner-prefix"]) {
     elements["scanner-prefix"].value = settings.prefix || "";
@@ -1885,9 +1895,11 @@ async function logIn(event) {
     });
     storeSession(response);
     currentUser = response.user || null;
-    setAuthenticatedView(true);
     await verifyCurrentUser();
+    setAuthenticatedView(true);
     await loadCloudRecords();
+    loadPendingUsers().catch((error) =>
+      showToast(`Freigabeanfragen konnten nicht geladen werden: ${error.message}`, true));
     showToast("Du bist angemeldet.");
   } catch (error) {
     try {
@@ -1903,32 +1915,120 @@ async function logIn(event) {
 async function verifyCurrentUser() {
   currentUser = await apiRequest("/auth/v1/user");
   elements["signed-in-email"].textContent = currentUser.email || "angemeldet";
+  const profiles = await apiRequest(
+    `/rest/v1/eventtech_web_profiles?select=status,role&user_id=eq.${encodeURIComponent(currentUser.id)}`,
+  );
+  if (!Array.isArray(profiles) || !profiles[0]) {
+    throw new Error("Für dein Konto fehlt das Freigabeprofil. Bitte den Admin kontaktieren.");
+  }
+  currentProfile = profiles[0];
+  if (currentProfile.status !== "approved") {
+    throw new Error(currentProfile.status === "pending"
+      ? "Dein Konto wartet noch auf die Freigabe durch den Admin."
+      : "Dein Konto wurde nicht freigegeben. Bitte den Admin kontaktieren.");
+  }
+}
+
+async function loadPendingUsers() {
+  if (currentProfile?.role !== "admin") return;
+  const users = await apiRequest("/rest/v1/rpc/eventtech_web_list_pending_users");
+  if (!Array.isArray(users)) throw new Error("Supabase hat eine ungültige Kontenliste zurückgegeben.");
+  elements["pending-users-list"].innerHTML = users.length
+    ? users.map((user) => `
+      <div class="pending-user">
+        <div><strong>${escapeHtml(user.email || "E-Mail nicht verfügbar")}</strong><small>Registriert: ${escapeHtml(new Date(user.created_at).toLocaleDateString("de-DE"))}</small></div>
+        <div class="feature-actions">
+          <button class="button button-primary" type="button" data-user-action="approve" data-user-id="${escapeHtml(user.user_id)}">Freigeben</button>
+          <button class="button button-quiet" type="button" data-user-action="deny" data-user-id="${escapeHtml(user.user_id)}">Ablehnen</button>
+        </div>
+      </div>`).join("")
+    : '<p class="gate-footnote">Keine offenen Freigabeanfragen.</p>';
+}
+
+async function updateUserApproval(userId, approved) {
+  await apiRequest("/rest/v1/rpc/eventtech_web_set_user_approval", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ p_user_id: userId, p_approved: approved }),
+  });
+  showToast(approved ? "Konto wurde freigegeben." : "Konto wurde abgelehnt.");
+  try {
+    await loadPendingUsers();
+  } catch (error) {
+    showToast(`Änderung gespeichert, aber Freigabeanfragen konnten nicht aktualisiert werden: ${error.message}`, true);
+  }
+}
+
+async function createAccount() {
+  if (!elements["login-form"].reportValidity()) return;
+  const email = elements["email"].value.trim();
+  const password = elements["password"].value;
+  if (password.length < 12) {
+    showToast("Das Passwort muss mindestens 12 Zeichen lang sein.", true);
+    return;
+  }
+  elements["create-account-button"].disabled = true;
+  try {
+    await authRequest("signup", { email, password });
+    elements["password"].value = "";
+    showToast("Konto erstellt. Bestätige deine E-Mail; danach wartet dein Konto auf die Adminfreigabe.");
+  } catch (error) {
+    showToast(`Konto konnte nicht erstellt werden: ${error.message}`, true);
+  } finally {
+    elements["create-account-button"].disabled = false;
+  }
+}
+
+async function changePassword(event) {
+  event.preventDefault();
+  if (!elements["change-password-form"].reportValidity()) return;
+  const currentPassword = elements["current-password"].value;
+  const newPassword = elements["new-password"].value;
+  if (newPassword.length < 12) {
+    showToast("Das neue Passwort muss mindestens 12 Zeichen lang sein.", true);
+    return;
+  }
+  if (newPassword !== elements["confirm-password"].value) {
+    showToast("Die neuen Passwörter stimmen nicht überein.", true);
+    return;
+  }
+  try {
+    const reauthenticated = await authRequest("token?grant_type=password", {
+      email: currentUser.email,
+      password: currentPassword,
+    });
+    storeSession(reauthenticated);
+    await authRequest("user", { password: newPassword }, session.access_token, "PUT");
+    elements["change-password-form"].reset();
+    showToast("Passwort wurde aktualisiert.");
+  } catch (error) {
+    showToast(`Passwort konnte nicht geändert werden: ${error.message}`, true);
+  }
 }
 
 async function restoreSession() {
   try {
-    projectConfig = readStorage(CONFIG_STORAGE_KEY);
+    const savedConfig = readStorage(CONFIG_STORAGE_KEY);
     session = readStorage(SESSION_STORAGE_KEY);
-  } catch (error) {
-    showToast(error.message, true);
-    return;
-  }
-  if (projectConfig?.url && projectConfig?.anonKey) {
+    const configToLoad = savedConfig || DEFAULT_SUPABASE_CONFIG;
     try {
-      projectConfig.url = normalizeProjectUrl(projectConfig.url);
-      elements["project-url"].value = projectConfig.url;
-      elements["publishable-key"].value = projectConfig.anonKey;
-      elements["login-button"].disabled = false;
+      saveConfig(configToLoad.url, configToLoad.anonKey);
     } catch (error) {
       showToast(`Projektkonfiguration ungültig: ${error.message}`, true);
       projectConfig = null;
     }
+  } catch (error) {
+    showToast(error.message, true);
+    return;
   }
+  if (projectConfig) setConnectionStatus("Projekt bereit · anmelden");
   if (!session?.access_token || !projectConfig) return;
   try {
     await verifyCurrentUser();
     setAuthenticatedView(true);
     await loadCloudRecords();
+    loadPendingUsers().catch((error) =>
+      showToast(`Freigabeanfragen konnten nicht geladen werden: ${error.message}`, true));
   } catch (error) {
     try {
       clearSessionStorage();
@@ -2122,7 +2222,19 @@ function bindEvents() {
     elements["supabase-config-confirm"].value = "";
   });
   elements["login-form"].addEventListener("submit", logIn);
+  elements["create-account-button"].addEventListener("click", createAccount);
   elements["logout-button"].addEventListener("click", logOut);
+  elements["change-password-form"].addEventListener("submit", changePassword);
+  elements["refresh-pending-users"].addEventListener("click", () => {
+    loadPendingUsers().catch((error) => showToast(`Freigabeanfragen konnten nicht geladen werden: ${error.message}`, true));
+  });
+  elements["pending-users-list"].addEventListener("click", (event) => {
+    const button = event.target.closest("[data-user-action]");
+    if (!button) return;
+    const approved = button.dataset.userAction === "approve";
+    updateUserApproval(button.dataset.userId, approved)
+      .catch((error) => showToast(`Freigabe konnte nicht gespeichert werden: ${error.message}`, true));
+  });
   elements["refresh-button"].addEventListener("click", () => loadInventory(true));
   elements["search-input"].addEventListener("input", renderInventory);
   elements["status-filter"].addEventListener("change", renderInventory);
